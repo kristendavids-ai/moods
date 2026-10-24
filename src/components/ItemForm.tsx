@@ -7,6 +7,7 @@ import { getApiKey } from "../lib/settings";
 import { currentSeason, suggestedSeasons } from "../lib/seasons";
 import { newId } from "../db/store";
 import { useImage } from "../lib/useImage";
+import { Hanger } from "./Hanger";
 
 interface Props {
   categories: string[];
@@ -154,8 +155,9 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, o
         </div>
       ) : (
         <button className="picker" onClick={() => fileRef.current?.click()}>
-          <span className="big">Add a piece</span>
-          <span className="micro">Choose a photo or screenshot +</span>
+          <Hanger />
+          <span>Add a piece</span>
+          <span className="mute">Choose a photo or screenshot +</span>
         </button>
       )}
 
@@ -251,7 +253,7 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, o
         )}
         <button className="bar" disabled={!canSave} onClick={save}>
           <span>{editing ? "Save changes" : "Save to board"}</span>
-          <span className="cond">{d.category}</span>
+          <span>{d.category}</span>
         </button>
       </div>
     </div>

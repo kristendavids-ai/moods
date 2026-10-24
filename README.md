@@ -2,7 +2,7 @@
 
 A moodboard / wishlist for clothes, built as an iPhone web app. Snap or screenshot a piece, Claude reads the brand, and it's filed by category and season.
 
-Palace-style navigation (pill menu, frosted category list, swipeable tabs, tight 2-up grid) on a Hard Sun-style page (bone white, hairlines, `+` accordions, black bottom bar).
+Hard Sun design language throughout — bone white, hairline rules, small grotesk type, `+` accordions, black utility boxes and bars, thin-line drawings — with one borrowed element: Palace's frosted-glass menu.
 
 ## Use it
 

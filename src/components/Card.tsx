@@ -2,29 +2,23 @@ import { useState } from "react";
 import type { Item } from "../types";
 import { useImage } from "../lib/useImage";
 
-const STATUS_LINE: Record<Item["status"], string> = {
-  wishlist: "",
-  owned: "Owned",
-  soldout: "Sold out",
-};
-
 export function Card({ item, onOpen }: { item: Item; onOpen: () => void }) {
   const url = useImage(item.imageId);
   const [ready, setReady] = useState(false);
-  const second = [STATUS_LINE[item.status], item.season].filter(Boolean).join(" · ");
+  const meta = [item.name, item.season].filter(Boolean).join(" · ");
 
   return (
     <button className={`card${item.status === "soldout" ? " soldout" : ""}`} onClick={onOpen}>
       <div className="plate">
         {url && <img src={url} alt="" className={ready ? "ready" : ""} onLoad={() => setReady(true)} />}
+        {item.status !== "wishlist" && <span className="flag">{item.status === "owned" ? "Owned" : "Sold out"}</span>}
       </div>
-      <div className="card-caption cond">
-        <div>
-          {item.brand || "Unknown"}
-          {item.name ? ` ${item.name}` : ""}
-          {item.colour ? ` ${item.colour.name}` : ""}
-        </div>
-        {second && <div className="line2">{second}</div>}
+      <div className="card-caption">
+        <span className="brand">
+          {item.colour && <span className="dot sm" style={{ background: item.colour.hex }} aria-hidden />}
+          {item.brand || "Unknown"} <span className="plus">+</span>
+        </span>
+        {meta && <span className="mute">{meta}</span>}
       </div>
     </button>
   );

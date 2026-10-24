@@ -110,7 +110,7 @@ export function ItemDetail({ item, onBack, onEdit, onStatus, onDelete }: Props) 
 
       <button className="bar" onClick={onEdit}>
         <span>Edit piece</span>
-        <span className="cond">{STATUSES.find((s) => s.id === item.status)!.label}</span>
+        <span>{STATUSES.find((s) => s.id === item.status)!.label}</span>
       </button>
     </div>
   );

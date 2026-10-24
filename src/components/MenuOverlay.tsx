@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Filters, Item, Status } from "../types";
 import { STATUSES } from "../types";
-import { PillHeader } from "./PillHeader";
+import { Header } from "./Header";
 import { useImage } from "../lib/useImage";
 
 interface Props {
@@ -47,7 +47,7 @@ export function MenuOverlay(p: Props) {
         <div className="menu-bg" style={bg ? { backgroundImage: `url(${bg})` } : undefined} />
         <div className="menu-glass" />
         <div className="menu-inner">
-          <PillHeader open onToggle={() => close()} />
+          <Header open count={p.items.length} onToggle={() => close()} />
           <ul className="menu-list">
             {["All", ...p.categories].map((c, i) => (
               <li key={c} style={{ animationDelay: `${40 + i * 18}ms` }}>
@@ -64,7 +64,7 @@ export function MenuOverlay(p: Props) {
           </ul>
 
           {p.seasons.length > 0 && (
-            <div className="menu-row cond">
+            <div className="menu-row">
               <span className="label">Season</span>
               {p.seasons.map((s) => (
                 <button key={s} aria-pressed={p.filters.season === s} onClick={() => toggleSeason(s)}>
@@ -73,7 +73,7 @@ export function MenuOverlay(p: Props) {
               ))}
             </div>
           )}
-          <div className="menu-row cond">
+          <div className="menu-row">
             <span className="label">Status</span>
             {STATUSES.map((s) => (
               <button key={s.id} aria-pressed={p.filters.status === s.id} onClick={() => toggleStatus(s.id)}>
@@ -89,10 +89,10 @@ export function MenuOverlay(p: Props) {
             onClick={() => close(() => (latest ? p.onOpenItem(latest) : p.onAdd()))}
           >
             <span className="txt">
-              <b className="cond">
-                {latest ? "Latest" : "Start"} <span style={{ opacity: 0.55 }}>{latest ? "addition" : "your board"}</span>
-              </b>
-              <small className="cond">{latest ? latest.brand || "View" : "+ Add a piece"}</small>
+              <span>
+                {latest ? "Latest addition" : "Start your board"} <span className="plus">+</span>
+              </span>
+              <small>{latest ? [latest.brand, latest.name].filter(Boolean).join(" — ") || "View" : "Add a piece"}</small>
             </span>
             {bg && <img src={bg} alt="" />}
           </button>

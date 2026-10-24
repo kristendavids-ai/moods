@@ -5,7 +5,8 @@ import { deleteItem, listItems, saveItem } from "./db/store";
 import { getCategories, setCategories as persistCategories } from "./lib/settings";
 import { seasonSortKey } from "./lib/seasons";
 import { revokeUrl } from "./lib/image";
-import { PillHeader } from "./components/PillHeader";
+import { Header, pad3 } from "./components/Header";
+import { Hanger } from "./components/Hanger";
 import { CategoryTabs } from "./components/CategoryTabs";
 import { Card } from "./components/Card";
 import { MenuOverlay } from "./components/MenuOverlay";
@@ -144,7 +145,12 @@ export default function App() {
   return (
     <>
       <header className="header">
-        <PillHeader open={menu} onToggle={() => setMenu(true)} />
+        <Header
+          open={menu}
+          count={items.length}
+          onToggle={() => setMenu(true)}
+          onHome={() => setFilters({ category: "All", season: null, status: null })}
+        />
         <CategoryTabs
           categories={allCategories}
           active={filters.category}
@@ -155,7 +161,7 @@ export default function App() {
       {activeChips.length > 0 && (
         <div className="chips">
           {activeChips.map((c) => (
-            <button key={c.label} className="chip cond" onClick={c.clear}>
+            <button key={c.label} className="chip" onClick={c.clear}>
               {c.label} <span aria-label="clear">×</span>
             </button>
           ))}
@@ -164,10 +170,9 @@ export default function App() {
 
       {loaded && visible.length === 0 ? (
         <div className="empty">
-          <h2>{items.length ? "Nothing here" : "Nothing here yet"}</h2>
-          <button className="cond" onClick={() => go({ name: "add" })}>
-            + Add a piece
-          </button>
+          <Hanger />
+          <p>{items.length ? "Nothing filed here yet." : "Your board is empty."}</p>
+          <p className="mute">{items.length ? "Try another category or season." : "Add a photo or screenshot to begin."}</p>
         </div>
       ) : (
         <main className="grid" key={`${filters.category}|${filters.season}|${filters.status}`}>
@@ -177,12 +182,14 @@ export default function App() {
         </main>
       )}
 
-      <div className="floaters">
-        <button className="floater cond" onClick={() => setSheet(true)}>
-          Filter
+      <div className="bars">
+        <button className="bar light small" onClick={() => setSheet(true)}>
+          <span>Filter</span>
+          <span>{activeChips.length ? pad3(activeChips.length).slice(1) : "+"}</span>
         </button>
-        <button className="floater dark cond" onClick={() => go({ name: "add" })}>
-          + Add
+        <button className="bar" onClick={() => go({ name: "add" })}>
+          <span>Add to board</span>
+          <span>{pad3(visible.length)}</span>
         </button>
       </div>
 

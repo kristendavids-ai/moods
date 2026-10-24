@@ -17,7 +17,7 @@ export function CategoryTabs({ categories, active, onSelect }: Props) {
   return (
     <div className="tabs" role="tablist" ref={ref}>
       {["All", ...categories].map((c) => (
-        <button key={c} role="tab" className="tab cond" aria-selected={c === active} onClick={() => onSelect(c)}>
+        <button key={c} role="tab" className="tab" aria-selected={c === active} onClick={() => onSelect(c)}>
           {c}
         </button>
       ))}
