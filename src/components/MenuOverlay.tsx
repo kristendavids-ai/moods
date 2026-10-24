@@ -1,0 +1,103 @@
+import { useEffect, useState } from "react";
+import type { Filters, Item, Status } from "../types";
+import { STATUSES } from "../types";
+import { PillHeader } from "./PillHeader";
+import { useImage } from "../lib/useImage";
+
+interface Props {
+  categories: string[];
+  seasons: string[];
+  items: Item[];
+  filters: Filters;
+  onFilters: (f: Filters) => void;
+  onClose: () => void;
+  onSettings: () => void;
+  onAdd: () => void;
+  onOpenItem: (item: Item) => void;
+}
+
+export function MenuOverlay(p: Props) {
+  const [closing, setClosing] = useState(false);
+  const latest = p.items[0];
+  const bg = useImage(latest?.imageId);
+
+  const close = (then?: () => void) => {
+    setClosing(true);
+    setTimeout(() => {
+      p.onClose();
+      then?.();
+    }, 200);
+  };
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const count = (c: string) => (c === "All" ? p.items.length : p.items.filter((i) => i.category === c).length);
+  const pick = (f: Partial<Filters>) => close(() => p.onFilters({ ...p.filters, ...f }));
+  const toggleStatus = (s: Status) => pick({ status: p.filters.status === s ? null : s });
+  const toggleSeason = (s: string) => pick({ season: p.filters.season === s ? null : s });
+
+  return (
+    <>
+      <div className="menu-scrim" onClick={() => close()} />
+      <nav className={`menu${closing ? " closing" : ""}`} aria-label="Menu">
+        <div className="menu-bg" style={bg ? { backgroundImage: `url(${bg})` } : undefined} />
+        <div className="menu-glass" />
+        <div className="menu-inner">
+          <PillHeader open onToggle={() => close()} />
+          <ul className="menu-list">
+            {["All", ...p.categories].map((c, i) => (
+              <li key={c} style={{ animationDelay: `${40 + i * 18}ms` }}>
+                <button
+                  className="menu-cat"
+                  aria-current={p.filters.category === c}
+                  onClick={() => pick({ category: c })}
+                >
+                  {c}
+                  {count(c) > 0 && <sup>{count(c)}</sup>}
+                </button>
+              </li>
+            ))}
+          </ul>
+
+          {p.seasons.length > 0 && (
+            <div className="menu-row cond">
+              <span className="label">Season</span>
+              {p.seasons.map((s) => (
+                <button key={s} aria-pressed={p.filters.season === s} onClick={() => toggleSeason(s)}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="menu-row cond">
+            <span className="label">Status</span>
+            {STATUSES.map((s) => (
+              <button key={s.id} aria-pressed={p.filters.status === s.id} onClick={() => toggleStatus(s.id)}>
+                {s.label}
+              </button>
+            ))}
+            <span style={{ flex: 1 }} />
+            <button onClick={() => close(p.onSettings)}>Settings</button>
+          </div>
+
+          <button
+            className="menu-feature"
+            onClick={() => close(() => (latest ? p.onOpenItem(latest) : p.onAdd()))}
+          >
+            <span className="txt">
+              <b className="cond">
+                {latest ? "Latest" : "Start"} <span style={{ opacity: 0.55 }}>{latest ? "addition" : "your board"}</span>
+              </b>
+              <small className="cond">{latest ? latest.brand || "View" : "+ Add a piece"}</small>
+            </span>
+            {bg && <img src={bg} alt="" />}
+          </button>
+        </div>
+      </nav>
+    </>
+  );
+}

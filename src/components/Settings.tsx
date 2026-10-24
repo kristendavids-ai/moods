@@ -1,0 +1,186 @@
+import { useRef, useState } from "react";
+import { clearAll, exportBackup, importBackup } from "../db/store";
+import { DEFAULT_CATEGORIES } from "../data/categories";
+import { getApiKey, setApiKey } from "../lib/settings";
+
+interface Props {
+  categories: string[];
+  onCategories: (c: string[]) => void;
+  onBack: () => void;
+  onChanged: () => void;
+  toast: (msg: string) => void;
+}
+
+export function Settings({ categories, onCategories, onBack, onChanged, toast }: Props) {
+  const [key, setKey] = useState(getApiKey());
+  const [newCat, setNewCat] = useState("");
+  const [confirmClear, setConfirmClear] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
+
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir;
+    if (j < 0 || j >= categories.length) return;
+    const next = [...categories];
+    [next[i], next[j]] = [next[j], next[i]];
+    onCategories(next);
+  };
+
+  const addCat = () => {
+    const c = newCat.trim();
+    if (!c || categories.some((x) => x.toLowerCase() === c.toLowerCase())) return;
+    onCategories([...categories, c]);
+    setNewCat("");
+  };
+
+  const doExport = async () => {
+    const blob = await exportBackup();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `moods-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  };
+
+  const doImport = async (file?: File) => {
+    if (!file) return;
+    try {
+      const n = await importBackup(file);
+      onChanged();
+      toast(`Imported ${n} pieces`);
+    } catch {
+      toast("That file isn't a MOODS backup");
+    }
+  };
+
+  return (
+    <div className="page settings">
+      <div className="topbar">
+        <button className="back" onClick={onBack}>
+          ← <span className="wordmark">Moods</span>
+        </button>
+      </div>
+      <h1>Settings</h1>
+
+      <section>
+        <h2>Brand scan</h2>
+        <div className="row">
+          <input
+            className="input"
+            type="password"
+            autoComplete="off"
+            placeholder="sk-ant-…"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            aria-label="Anthropic API key"
+          />
+          <button
+            className="btn"
+            onClick={() => {
+              setApiKey(key);
+              toast(key.trim() ? "Key saved" : "Key removed");
+            }}
+          >
+            Save
+          </button>
+        </div>
+        <p className="micro">
+          Paste an Anthropic API key to have Claude read the brand, piece, colour and category from each photo. The key
+          is stored only on this device and sent only to Anthropic. Each scan costs a fraction of a cent.
+        </p>
+      </section>
+
+      <section>
+        <h2>Categories</h2>
+        <ul className="catlist">
+          {categories.map((c, i) => (
+            <li key={c}>
+              <span>{c}</span>
+              <span className="ctrls">
+                <button aria-label={`Move ${c} up`} onClick={() => move(i, -1)}>
+                  ↑
+                </button>
+                <button aria-label={`Move ${c} down`} onClick={() => move(i, 1)}>
+                  ↓
+                </button>
+                <button
+                  aria-label={`Remove ${c}`}
+                  onClick={() => categories.length > 1 && onCategories(categories.filter((x) => x !== c))}
+                >
+                  ×
+                </button>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="row">
+          <input
+            className="input"
+            placeholder="New category"
+            value={newCat}
+            onChange={(e) => setNewCat(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addCat()}
+          />
+          <button className="btn" onClick={addCat}>
+            Add
+          </button>
+        </div>
+        <div className="row">
+          <button className="btn ghost" onClick={() => onCategories(DEFAULT_CATEGORIES)}>
+            Reset to default
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Backup</h2>
+        <p className="micro">
+          Your board lives on this device only. Export a backup now and then, and import it to move to a new phone.
+        </p>
+        <div className="row">
+          <button className="btn" onClick={doExport}>
+            Export backup
+          </button>
+          <button className="btn ghost" onClick={() => importRef.current?.click()}>
+            Import
+          </button>
+          <input
+            ref={importRef}
+            type="file"
+            accept="application/json,.json"
+            className="sr-only"
+            aria-label="Import backup"
+            onChange={(e) => doImport(e.target.files?.[0])}
+          />
+        </div>
+      </section>
+
+      <section>
+        <h2>Danger</h2>
+        <div className="row">
+          {confirmClear ? (
+            <>
+              <button
+                className="btn"
+                onClick={async () => {
+                  await clearAll();
+                  onChanged();
+                  setConfirmClear(false);
+                  toast("Board cleared");
+                }}
+              >
+                Delete everything
+              </button>
+              <button className="btn ghost" onClick={() => setConfirmClear(false)}>
+                Cancel
+              </button>
+            </>
+          ) : (
+            <button className="btn ghost" onClick={() => setConfirmClear(true)}>
+              Clear board
+            </button>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
