@@ -85,7 +85,7 @@ export function Settings({ categories, onCategories, onBack, onChanged, toast }:
         </div>
         <p className="micro">
           Paste an Anthropic API key to have Claude read the brand, piece, colour and category from each photo. The key
-          is stored only on this device and sent only to Anthropic. Each scan costs a fraction of a cent.
+          is stored only on this device and sent only to Anthropic. A scan costs roughly 1–2¢ from your API credits (a little more with two photos) and never touches your Claude app usage.
         </p>
       </section>
 

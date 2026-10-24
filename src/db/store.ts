@@ -1,5 +1,5 @@
 import { openDB, type DBSchema } from "idb";
-import type { Item } from "../types";
+import { FULL, type Item, type Photo } from "../types";
 import { base64ToBlob, blobToBase64 } from "../lib/image";
 
 interface MoodsDB extends DBSchema {
@@ -16,21 +16,50 @@ const dbPromise = openDB<MoodsDB>("moods", 1, {
 });
 
 export const newId = () => crypto.randomUUID();
+export const origKey = (photoId: string) => `${photoId}.orig`;
+
+// Items saved before two-photo support had a single `imageId` and no stored original.
+type LegacyItem = Omit<Item, "photos"> & { photos?: Photo[]; imageId?: string };
+
+function normalize(raw: LegacyItem): Item {
+  const { imageId, photos, ...rest } = raw;
+  return { ...rest, photos: photos ?? (imageId ? [{ id: imageId, kind: "item", crop: FULL }] : []) };
+}
 
 export async function listItems(): Promise<Item[]> {
   const db = await dbPromise;
-  const all = await db.getAllFromIndex("items", "createdAt");
-  return all.reverse();
+  const all = (await db.getAllFromIndex("items", "createdAt")) as LegacyItem[];
+  return all.reverse().map(normalize);
 }
 
-export async function getImage(id: string): Promise<Blob | undefined> {
-  return (await dbPromise).get("images", id);
+export async function getImage(key: string): Promise<Blob | undefined> {
+  return (await dbPromise).get("images", key);
 }
 
-export async function saveItem(item: Item, image?: Blob) {
+/** The uncropped source, falling back to the display image for legacy photos. */
+export async function getOriginal(photoId: string): Promise<Blob | undefined> {
+  return (await getImage(origKey(photoId))) ?? (await getImage(photoId));
+}
+
+export interface PhotoWrite {
+  photo: Photo;
+  display: Blob;
+  orig?: Blob;
+}
+
+/** Saves the item, writes any new/re-cropped photos and drops blobs of photos it no longer has. */
+export async function saveItem(item: Item, writes: PhotoWrite[] = [], removed: string[] = []) {
   const db = await dbPromise;
   const tx = db.transaction(["items", "images"], "readwrite");
-  if (image) await tx.objectStore("images").put(image, item.imageId);
+  const images = tx.objectStore("images");
+  for (const w of writes) {
+    await images.put(w.display, w.photo.id);
+    if (w.orig) await images.put(w.orig, origKey(w.photo.id));
+  }
+  for (const id of removed) {
+    await images.delete(id);
+    await images.delete(origKey(id));
+  }
   await tx.objectStore("items").put(item);
   await tx.done;
 }
@@ -39,7 +68,10 @@ export async function deleteItem(item: Item) {
   const db = await dbPromise;
   const tx = db.transaction(["items", "images"], "readwrite");
   await tx.objectStore("items").delete(item.id);
-  await tx.objectStore("images").delete(item.imageId);
+  for (const p of item.photos) {
+    await tx.objectStore("images").delete(p.id);
+    await tx.objectStore("images").delete(origKey(p.id));
+  }
   await tx.done;
 }
 
@@ -51,31 +83,52 @@ export async function clearAll() {
   await tx.done;
 }
 
-interface Backup {
+type Encoded = { type: string; data: string };
+const encode = async (b: Blob): Promise<Encoded> => ({ type: b.type, data: await blobToBase64(b) });
+const decode = (e: Encoded) => base64ToBlob(e.data, e.type);
+
+interface BackupV2 {
+  app: "moods";
+  version: 2;
+  items: (Item & { blobs: Record<string, Encoded> })[];
+}
+
+interface BackupV1 {
   app: "moods";
   version: 1;
-  items: (Item & { image?: { type: string; data: string } })[];
+  items: (LegacyItem & { image?: Encoded })[];
 }
 
 export async function exportBackup(): Promise<Blob> {
-  const items = await listItems();
-  const out: Backup = { app: "moods", version: 1, items: [] };
-  for (const item of items) {
-    const blob = await getImage(item.imageId);
-    out.items.push({
-      ...item,
-      image: blob ? { type: blob.type, data: await blobToBase64(blob) } : undefined,
-    });
+  const out: BackupV2 = { app: "moods", version: 2, items: [] };
+  for (const item of await listItems()) {
+    const blobs: Record<string, Encoded> = {};
+    for (const p of item.photos) {
+      for (const key of [p.id, origKey(p.id)]) {
+        const b = await getImage(key);
+        if (b) blobs[key] = await encode(b);
+      }
+    }
+    out.items.push({ ...item, blobs });
   }
   return new Blob([JSON.stringify(out)], { type: "application/json" });
 }
 
 // Merges by id, so importing the same backup twice is harmless.
 export async function importBackup(file: Blob): Promise<number> {
-  const parsed = JSON.parse(await file.text()) as Backup;
+  const parsed = JSON.parse(await file.text()) as BackupV1 | BackupV2;
   if (parsed.app !== "moods" || !Array.isArray(parsed.items)) throw new Error("Not a MOODS backup");
-  for (const { image, ...item } of parsed.items) {
-    await saveItem(item, image ? await base64ToBlob(image.data, image.type) : undefined);
+  const db = await dbPromise;
+  for (const raw of parsed.items) {
+    if (parsed.version === 2) {
+      const { blobs, ...item } = raw as BackupV2["items"][number];
+      for (const [key, enc] of Object.entries(blobs)) await db.put("images", await decode(enc), key);
+      await db.put("items", normalize(item));
+    } else {
+      const { image, ...item } = raw as BackupV1["items"][number];
+      if (image && item.imageId) await db.put("images", await decode(image), item.imageId);
+      await db.put("items", normalize(item));
+    }
   }
   return parsed.items.length;
 }

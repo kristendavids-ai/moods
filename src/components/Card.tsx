@@ -1,16 +1,15 @@
-import { useState } from "react";
 import type { Item } from "../types";
-import { useImage } from "../lib/useImage";
+import { boardPhoto } from "../types";
+import { PhotoView } from "./PhotoView";
 
 export function Card({ item, onOpen }: { item: Item; onOpen: () => void }) {
-  const url = useImage(item.imageId);
-  const [ready, setReady] = useState(false);
+  const photo = boardPhoto(item);
   const meta = [item.name, item.season].filter(Boolean).join(" · ");
 
   return (
     <button className={`card${item.status === "soldout" ? " soldout" : ""}`} onClick={onOpen}>
       <div className="plate">
-        {url && <img src={url} alt="" className={ready ? "ready" : ""} onLoad={() => setReady(true)} />}
+        {photo && <PhotoView photo={photo} />}
         {item.status !== "wishlist" && <span className="flag">{item.status === "owned" ? "Owned" : "Sold out"}</span>}
       </div>
       <div className="card-caption">

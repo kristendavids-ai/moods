@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Filters, Item } from "./types";
+import type { Filters, Item, PhotoKind } from "./types";
 import { STATUSES } from "./types";
-import { deleteItem, listItems, saveItem } from "./db/store";
+import { deleteItem, listItems, saveItem, type PhotoWrite } from "./db/store";
 import { getCategories, setCategories as persistCategories } from "./lib/settings";
 import { seasonSortKey } from "./lib/seasons";
 import { revokeUrl } from "./lib/image";
@@ -19,7 +19,7 @@ type View =
   | { name: "board" }
   | { name: "item"; id: string }
   | { name: "add" }
-  | { name: "edit"; id: string }
+  | { name: "edit"; id: string; addKind?: PhotoKind }
   | { name: "settings" };
 
 export default function App() {
@@ -70,9 +70,9 @@ export default function App() {
 
   const current = "id" in view ? items.find((i) => i.id === view.id) : undefined;
 
-  const onSave = async (item: Item, image?: Blob) => {
-    if (image) revokeUrl(item.imageId);
-    await saveItem(item, image);
+  const onSave = async (item: Item, writes: PhotoWrite[], removed: string[]) => {
+    await saveItem(item, writes, removed);
+    [...writes.map((w) => w.photo.id), ...removed].forEach(revokeUrl);
     await reload();
     go({ name: "item", id: item.id });
     toast(view.name === "edit" ? "Saved" : "Added to board");
@@ -86,6 +86,7 @@ export default function App() {
         knownSeasons={seasons}
         defaultCategory={filters.category}
         editing={view.name === "edit" ? current : undefined}
+        addKind={view.name === "edit" ? view.addKind : undefined}
         onCancel={() => go(current ? { name: "item", id: current.id } : { name: "board" })}
         onSave={onSave}
       />
@@ -99,13 +100,14 @@ export default function App() {
           item={current}
           onBack={() => go({ name: "board" })}
           onEdit={() => go({ name: "edit", id: current.id })}
+          onAddPhoto={(addKind) => go({ name: "edit", id: current.id, addKind })}
           onStatus={async (status) => {
             await saveItem({ ...current, status });
             reload();
           }}
           onDelete={async () => {
             await deleteItem(current);
-            revokeUrl(current.imageId);
+            current.photos.forEach((p) => revokeUrl(p.id));
             await reload();
             go({ name: "board" });
             toast("Removed");

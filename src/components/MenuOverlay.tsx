@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Filters, Item, Status } from "../types";
-import { STATUSES } from "../types";
+import { STATUSES, boardPhoto } from "../types";
 import { Header } from "./Header";
 import { useImage } from "../lib/useImage";
 
@@ -19,7 +19,7 @@ interface Props {
 export function MenuOverlay(p: Props) {
   const [closing, setClosing] = useState(false);
   const latest = p.items[0];
-  const bg = useImage(latest?.imageId);
+  const bg = useImage(latest && boardPhoto(latest)?.id);
 
   const close = (then?: () => void) => {
     setClosing(true);
