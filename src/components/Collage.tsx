@@ -42,6 +42,7 @@ export function Collage({ items, onOpen }: Props) {
               key={`${slot.item.id}:${slot.photo?.id}`}
               className="tile"
               data-key={`${slot.item.id}:${slot.photo?.id}`}
+              data-kind={slot.photo?.kind}
               style={{ left: `${slot.x}%`, width: `${slot.w}%`, marginTop: `${slot.y}%` }}
             >
               <Card

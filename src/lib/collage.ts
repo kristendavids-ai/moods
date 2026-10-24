@@ -28,8 +28,7 @@ export interface Spread {
 
 type Cell = { x: number; y: number; w: number };
 
-// Photos (worn shots, cropped product shots) and cut-outs can fill any cell; solo
-// spreads give a photo the full width and a cut-out a centred 72%.
+// Any cell can hold a photo or a cut-out; product shots are given the larger cells.
 const TEMPLATES: Cell[][] = [
   // Lead: a large image with a small one dropped beside it.
   [
@@ -51,41 +50,43 @@ const TEMPLATES: Cell[][] = [
   ],
 ];
 
-// A piece with both photos: the look, and the product beside it like a lookbook spread.
+// A piece with both photos: the product large, its look beside it like a lookbook spread.
 const PAIR: Cell[] = [
   { x: 0, y: 0, w: 60 },
   { x: 64, y: 34, w: 36 },
 ];
 
+const isWorn = (item: Item) => boardPhoto(item)?.kind === "worn";
 const variantOf = (p?: Photo): SlotVariant => (p?.kind === "item" && p.mode === "compose" ? "cutout" : "photo");
 const mirror = (c: Cell): Cell => ({ ...c, x: 100 - c.x - c.w });
 const extent = (cells: Cell[]) => Math.max(...cells.map((c) => c.y + c.w * 1.25));
 
 function spreadOf(items: Item[], cells: Cell[], flip: boolean): Spread {
-  let placed = flip ? cells.map(mirror) : cells;
-  // Newest piece takes the lead cell, so the board reads newest-first throughout.
-  const slots: Slot[] = [...items].reverse().map((item, i) => {
+  const placed = flip ? cells.map(mirror) : cells;
+  // Slots list newest first. Product shots always take the biggest cells, then worn
+  // shots; within each, newer pieces get the larger cell.
+  const newest = [...items].reverse();
+  const bySize = placed.map((_, i) => i).sort((a, b) => placed[b].w - placed[a].w);
+  const ranked = [...newest].sort((a, b) => Number(isWorn(a)) - Number(isWorn(b)));
+  const slots: Slot[] = newest.map((item) => {
     const photo = boardPhoto(item);
-    return { item, photo, variant: variantOf(photo), caption: true, ...placed[i] };
+    const cell = placed[bySize[ranked.indexOf(item)]];
+    return { item, photo, variant: variantOf(photo), caption: true, ...cell };
   });
-  // A solo photo runs full width.
-  if (slots.length === 1 && slots[0].variant === "photo") {
-    Object.assign(slots[0], { x: 0, y: 0, w: 100 });
-    placed = [{ x: 0, y: 0, w: 100 }];
-  }
   return { key: items.map((i) => i.id).join("|"), height: extent(placed), slots };
 }
 
+// The product is the large image; the look sits smaller beside it.
 function pairOf(item: Item, flip: boolean): Spread {
   const worn = item.photos.find((p) => p.kind === "worn")!;
   const product = item.photos.find((p) => p.kind === "item")!;
-  const [a, b] = flip ? PAIR.map(mirror) : PAIR;
+  const [big, small] = flip ? PAIR.map(mirror) : PAIR;
   return {
     key: `pair:${item.id}`,
     height: extent(PAIR),
     slots: [
-      { item, photo: worn, variant: "photo", caption: false, ...a },
-      { item, photo: product, variant: variantOf(product), caption: true, ...b },
+      { item, photo: product, variant: variantOf(product), caption: true, ...big },
+      { item, photo: worn, variant: "photo", caption: false, ...small },
     ],
   };
 }
