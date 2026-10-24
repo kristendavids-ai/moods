@@ -179,18 +179,28 @@ img {
   font-size: 11px;
 }
 
-/* ── Editorial grid ────────────────────────────────────── */
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px var(--gutter);
-  padding: var(--gutter) var(--gutter) calc(70px + var(--safe-bottom));
+/* ── Editorial collage ─────────────────────────────────── */
+.board {
+  padding: 14px var(--gutter) calc(80px + var(--safe-bottom));
   animation: fade 0.35s var(--ease);
 }
 
-/* Every fifth piece runs full width, like Hard Sun's alternating spreads. */
-.grid > .card:nth-child(5n + 1) {
-  grid-column: span 2;
+.spread {
+  position: relative;
+  margin-bottom: min(7vw, 44px);
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.7s var(--ease), transform 0.9s var(--ease);
+}
+
+.spread.in {
+  opacity: 1;
+  transform: none;
+}
+
+.tile {
+  position: absolute;
+  top: 0;
 }
 
 .card {
@@ -208,6 +218,11 @@ img {
   aspect-ratio: 4 / 5;
   background: var(--plate);
   overflow: hidden;
+}
+
+/* Cut-outs float straight on the paper; their white ground multiplies away. */
+.card.cutout .plate {
+  background: transparent;
 }
 
 /* Photos are rendered as true 4:5 images and fill the plate. */
@@ -1281,8 +1296,9 @@ img {
 }
 
 @media (min-width: 720px) {
-  .grid {
-    grid-template-columns: repeat(4, 1fr);
+  .board {
+    max-width: 720px;
+    margin: 0 auto;
   }
   .page,
   .settings,

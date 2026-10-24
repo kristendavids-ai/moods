@@ -8,7 +8,7 @@ import { revokeUrl } from "./lib/image";
 import { Header, pad3 } from "./components/Header";
 import { Hanger } from "./components/Hanger";
 import { CategoryTabs } from "./components/CategoryTabs";
-import { Card } from "./components/Card";
+import { Collage } from "./components/Collage";
 import { MenuOverlay } from "./components/MenuOverlay";
 import { FilterSheet } from "./components/FilterSheet";
 import { ItemDetail } from "./components/ItemDetail";
@@ -177,11 +177,11 @@ export default function App() {
           <p className="mute">{items.length ? "Try another category or season." : "Add a photo or screenshot to begin."}</p>
         </div>
       ) : (
-        <main className="grid" key={`${filters.category}|${filters.season}|${filters.status}`}>
-          {visible.map((item) => (
-            <Card key={item.id} item={item} onOpen={() => go({ name: "item", id: item.id })} />
-          ))}
-        </main>
+        <Collage
+          key={`${filters.category}|${filters.season}|${filters.status}`}
+          items={visible}
+          onOpen={(item) => go({ name: "item", id: item.id })}
+        />
       )}
 
       <div className="bars">
