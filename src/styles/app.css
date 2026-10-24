@@ -210,7 +210,7 @@ img {
   overflow: hidden;
 }
 
-/* Photos: item shots sit centred with air on the plate, worn shots fill it. */
+/* Photos are rendered as true 4:5 images and fill the plate. */
 .ph {
   position: absolute;
   inset: 0;
@@ -227,11 +227,13 @@ img {
   opacity: 1;
 }
 
-.ph-worn {
+.ph-framed,
+.ph-legacy-worn {
   object-fit: cover;
 }
 
-.ph-item {
+/* Item shots saved before 4:5 framing keep their old letterboxed look. */
+.ph-legacy-item {
   object-fit: contain;
   padding: 9%;
 }
@@ -758,11 +760,56 @@ img {
 }
 
 .crop-hint {
-  margin: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
   padding: 0 var(--inset) 8px;
 }
 
+.crop-modes {
+  display: flex;
+  gap: 12px;
+  flex: none;
+}
+
+.crop-modes button {
+  color: var(--mute);
+}
+
+.crop-modes button[aria-pressed="true"] {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.crop-rect.free {
+  background-image: none;
+}
+
+.crop-preview {
+  position: absolute;
+  right: var(--inset);
+  bottom: 10px;
+  width: 84px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+  animation: fade 0.25s var(--ease);
+}
+
+.crop-preview img {
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  background: var(--plate);
+  mix-blend-mode: multiply;
+  box-shadow: 0 0 0 1px var(--hair);
+}
+
 .crop-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   margin: 0 var(--inset);

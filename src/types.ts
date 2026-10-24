@@ -21,11 +21,16 @@ export interface Rect {
   h: number;
 }
 
+/** "crop": a 4:5 region of the original. "compose": the garment's box, centred on white in 4:5. */
+export type FrameMode = "crop" | "compose";
+
 export interface Photo {
   /** Key of the cropped display blob; the original is stored under `${id}.orig`. */
   id: string;
   kind: PhotoKind;
   crop: Rect;
+  /** Missing on photos saved before 4:5 framing; those display letterboxed until re-adjusted. */
+  mode?: FrameMode;
 }
 
 export interface Item {

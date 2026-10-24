@@ -1,6 +1,7 @@
 import { openDB, type DBSchema } from "idb";
 import { FULL, type Item, type Photo } from "../types";
 import { base64ToBlob, blobToBase64 } from "../lib/image";
+import { renderPhoto } from "../lib/frame";
 
 interface MoodsDB extends DBSchema {
   items: { key: string; value: Item; indexes: { createdAt: number } };
@@ -89,7 +90,7 @@ const decode = (e: Encoded) => base64ToBlob(e.data, e.type);
 
 interface BackupV2 {
   app: "moods";
-  version: 2;
+  version: 2 | 3;
   items: (Item & { blobs: Record<string, Encoded> })[];
 }
 
@@ -99,14 +100,17 @@ interface BackupV1 {
   items: (LegacyItem & { image?: Encoded })[];
 }
 
+// v3 carries originals only for framed photos; their display images are re-rendered on import.
 export async function exportBackup(): Promise<Blob> {
-  const out: BackupV2 = { app: "moods", version: 2, items: [] };
+  const out: BackupV2 = { app: "moods", version: 3, items: [] };
   for (const item of await listItems()) {
     const blobs: Record<string, Encoded> = {};
     for (const p of item.photos) {
-      for (const key of [p.id, origKey(p.id)]) {
-        const b = await getImage(key);
-        if (b) blobs[key] = await encode(b);
+      const orig = await getImage(origKey(p.id));
+      if (orig) blobs[origKey(p.id)] = await encode(orig);
+      if (!p.mode || !orig) {
+        const display = await getImage(p.id);
+        if (display) blobs[p.id] = await encode(display);
       }
     }
     out.items.push({ ...item, blobs });
@@ -120,15 +124,20 @@ export async function importBackup(file: Blob): Promise<number> {
   if (parsed.app !== "moods" || !Array.isArray(parsed.items)) throw new Error("Not a MOODS backup");
   const db = await dbPromise;
   for (const raw of parsed.items) {
-    if (parsed.version === 2) {
-      const { blobs, ...item } = raw as BackupV2["items"][number];
-      for (const [key, enc] of Object.entries(blobs)) await db.put("images", await decode(enc), key);
-      await db.put("items", normalize(item));
-    } else {
+    if (parsed.version === 1) {
       const { image, ...item } = raw as BackupV1["items"][number];
       if (image && item.imageId) await db.put("images", await decode(image), item.imageId);
       await db.put("items", normalize(item));
+      continue;
     }
+    const { blobs, ...rest } = raw as BackupV2["items"][number];
+    const item = normalize(rest);
+    for (const [key, enc] of Object.entries(blobs)) await db.put("images", await decode(enc), key);
+    for (const p of item.photos) {
+      const orig = blobs[origKey(p.id)];
+      if (p.mode && orig && !blobs[p.id]) await db.put("images", await renderPhoto(await decode(orig), p as Required<Photo>), p.id);
+    }
+    await db.put("items", item);
   }
   return parsed.items.length;
 }

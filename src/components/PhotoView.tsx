@@ -3,13 +3,13 @@ import type { Photo } from "../types";
 import { useImage } from "../lib/useImage";
 
 interface Props {
-  photo: Pick<Photo, "id" | "kind">;
+  photo: Pick<Photo, "id" | "kind" | "mode">;
   /** Overrides the stored image, e.g. an unsaved crop in the form. */
   src?: string;
   alt?: string;
 }
 
-// Item shots sit centred on the plate; worn shots fill it.
+// Framed photos are true 4:5 and fill the plate; older item shots are letterboxed.
 export function PhotoView({ photo, src, alt = "" }: Props) {
   const stored = useImage(src ? undefined : photo.id);
   const url = src ?? stored;
@@ -19,7 +19,7 @@ export function PhotoView({ photo, src, alt = "" }: Props) {
       src={url}
       alt={alt}
       draggable={false}
-      className={`ph ph-${photo.kind}${loaded === url ? " ready" : ""}`}
+      className={`ph ${photo.mode ? "ph-framed" : `ph-legacy-${photo.kind}`}${loaded === url ? " ready" : ""}`}
       onLoad={() => setLoaded(url)}
     />
   ) : null;

@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { Item, Photo, PhotoKind, Rect, Status } from "../types";
+import type { FrameMode, Item, Photo, PhotoKind, Rect, Status } from "../types";
 import { STATUSES } from "../types";
-import { compressImage } from "../lib/image";
-import { autoCrop, cropToBlob, imageSize, lockAspect } from "../lib/frame";
+import { prepareOriginal } from "../lib/image";
+import { autoFrame, imageSize, lockAspect, renderPhoto, type Framing } from "../lib/frame";
 import type { ScanResult } from "../lib/scan";
 import { getApiKey } from "../lib/settings";
 import { currentSeason, suggestedSeasons } from "../lib/seasons";
@@ -38,8 +38,11 @@ interface Slot {
   id: string;
   kind: PhotoKind;
   crop: Rect;
+  /** Undefined for photos saved before 4:5 framing, until they're re-adjusted. */
+  mode?: FrameMode;
   /** Suggested framing, restored by Reset in the crop screen. */
   auto: Rect;
+  autoMode?: FrameMode;
   box?: Rect;
   orig?: Blob;
   display?: Blob;
@@ -62,6 +65,7 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
     (editing?.photos ?? []).map((p) => ({
       ...p,
       auto: p.crop,
+      autoMode: p.mode,
       isNew: false,
       dirty: false,
       kindLocked: true,
@@ -72,7 +76,16 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
   slotsRef.current = slots;
   const [removed, setRemoved] = useState<string[]>([]);
   const [busy, setBusy] = useState(0);
-  const [cropping, setCropping] = useState<{ id: string; src: string; size: { w: number; h: number } }>();
+  const [cropping, setCropping] = useState<{
+    id: string;
+    orig: Blob;
+    src: string;
+    size: { w: number; h: number };
+    crop: Rect;
+    mode: FrameMode;
+    auto: Rect;
+    autoMode: FrameMode;
+  }>();
   const [scan, setScan] = useState<ScanState>({ kind: "idle" });
   const [scanned, setScanned] = useState<Set<keyof Draft>>(new Set());
   const touched = useRef(new Set<keyof Draft>());
@@ -137,9 +150,19 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
     return orig;
   };
 
-  const reframe = async (id: string, orig: Blob, crop: Rect, extra: Partial<Slot> & { kind: PhotoKind }) => {
-    const display = await cropToBlob(orig, crop, extra.kind);
-    patchSlot(id, { ...extra, crop, display, preview: URL.createObjectURL(display), dirty: true });
+  const reframe = async (id: string, orig: Blob, f: Framing, extra: Partial<Slot> = {}) => {
+    const display = await renderPhoto(orig, f);
+    patchSlot(id, { ...extra, ...f, display, preview: URL.createObjectURL(display), dirty: true });
+  };
+
+  // Claude's (or the default) framing for `kind`; a framing the user set by hand is kept, converted if needed.
+  const frameFor = async (s: Slot, orig: Blob, kind: PhotoKind, box?: Rect) => {
+    const a = await autoFrame(orig, kind, box);
+    const auto = { auto: a.crop, autoMode: a.mode };
+    if (!s.cropTouched || !s.mode) return { framing: { kind, ...a }, auto };
+    const size = await imageSize(orig);
+    const crop = a.mode === "crop" ? lockAspect(s.crop, size.w, size.h) : s.crop;
+    return { framing: { kind, crop, mode: a.mode }, auto };
   };
 
   const applyFields = (r: ScanResult) => {
@@ -185,9 +208,8 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
           const orig = s.orig ?? origs[targets.findIndex((t) => t.id === s.id)];
           if (!orig) return;
           if (s.cropTouched && kind === s.kind) return patchSlot(s.id, { box });
-          const auto = await autoCrop(orig, kind, box);
-          const crop = s.cropTouched ? lockIfWorn(s.crop, kind, await imageSize(orig)) : auto;
-          await reframe(s.id, orig, crop, { kind, auto, box });
+          const { framing, auto } = await frameFor(s, orig, kind, box);
+          await reframe(s.id, orig, framing, { ...auto, box });
         }),
       );
       setScan({ kind: "done" });
@@ -208,16 +230,17 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
         const current = slotsRef.current;
         const created: Slot[] = [];
         for (const [i, file] of picked.entries()) {
-          const orig = await compressImage(file).catch(() => file);
+          const orig = await prepareOriginal(file).catch(() => file);
           const taken = new Set([...current, ...created].map((s) => s.kind));
           const kind: PhotoKind = want && i === 0 ? want : !taken.has("item") ? "item" : "worn";
-          const auto = await autoCrop(orig, kind);
-          const display = await cropToBlob(orig, auto, kind);
+          const a = await autoFrame(orig, kind);
+          const display = await renderPhoto(orig, { kind, ...a });
           created.push({
             id: newId(),
             kind,
-            crop: auto,
-            auto,
+            ...a,
+            auto: a.crop,
+            autoMode: a.mode,
             orig,
             display,
             preview: URL.createObjectURL(display),
@@ -261,10 +284,8 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
         slotsRef.current.map(async (s) => {
           const orig = await ensureOrig(s);
           if (!orig) return;
-          const kind = other(s.kind);
-          const auto = await autoCrop(orig, kind, s.box);
-          const crop = s.cropTouched ? lockIfWorn(s.crop, kind, await imageSize(orig)) : auto;
-          await reframe(s.id, orig, crop, { kind, auto, kindLocked: true });
+          const { framing, auto } = await frameFor(s, orig, other(s.kind), s.box);
+          await reframe(s.id, orig, framing, { ...auto, kindLocked: true });
         }),
       ),
     );
@@ -278,25 +299,39 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
   const adjust = async (s: Slot) => {
     const orig = await track(ensureOrig(s));
     if (!orig) return;
-    setCropping({ id: s.id, src: URL.createObjectURL(orig), size: await imageSize(orig) });
+    // Photos saved before 4:5 framing start from a fresh automatic framing.
+    const a = s.mode && s.autoMode ? null : await track(autoFrame(orig, s.kind, s.box));
+    setCropping({
+      id: s.id,
+      orig,
+      src: URL.createObjectURL(orig),
+      size: await imageSize(orig),
+      crop: a?.crop ?? s.crop,
+      mode: a?.mode ?? s.mode!,
+      auto: a?.crop ?? s.auto,
+      autoMode: a?.mode ?? s.autoMode!,
+    });
   };
 
-  const finishCrop = async (rect?: Rect) => {
+  const finishCrop = async (result?: { crop: Rect; mode: FrameMode }) => {
     const c = cropping!;
     URL.revokeObjectURL(c.src);
     setCropping(undefined);
     const s = slotsRef.current.find((x) => x.id === c.id);
-    if (!rect || !s?.orig) return;
-    await track(reframe(s.id, s.orig, rect, { kind: s.kind, cropTouched: true }));
+    if (!result || !s) return;
+    await track(
+      reframe(s.id, c.orig, { kind: s.kind, ...result }, { cropTouched: true, auto: c.auto, autoMode: c.autoMode }),
+    );
   };
 
   const canSave = slots.length > 0 && busy === 0 && scan.kind !== "scanning";
+  const meta = (s: Slot): Photo => ({ id: s.id, kind: s.kind, crop: s.crop, ...(s.mode ? { mode: s.mode } : {}) });
   const save = () => {
     if (!canSave) return;
-    const photos: Photo[] = slots.map(({ id, kind, crop }) => ({ id, kind, crop }));
+    const photos: Photo[] = slots.map(meta);
     const writes: PhotoWrite[] = slots
       .filter((s) => s.dirty && s.display)
-      .map((s) => ({ photo: { id: s.id, kind: s.kind, crop: s.crop }, display: s.display!, orig: s.orig }));
+      .map((s) => ({ photo: meta(s), display: s.display!, orig: s.orig }));
     const item: Item = {
       id: editing?.id ?? newId(),
       photos,
@@ -493,19 +528,18 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
 
       {cropping && cropSlot && (
         <CropEditor
+          orig={cropping.orig}
           src={cropping.src}
           size={cropping.size}
           kind={cropSlot.kind}
-          rect={cropSlot.crop}
-          auto={cropSlot.auto}
+          rect={cropping.crop}
+          mode={cropping.mode}
+          auto={cropping.auto}
+          autoMode={cropping.autoMode}
           onDone={finishCrop}
           onCancel={() => finishCrop()}
         />
       )}
     </div>
   );
-}
-
-function lockIfWorn(r: Rect, kind: PhotoKind, size: { w: number; h: number }): Rect {
-  return kind === "worn" ? lockAspect(r, size.w, size.h) : r;
 }

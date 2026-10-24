@@ -1,30 +1,36 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from "react";
-import type { PhotoKind, Rect } from "../types";
-import { WORN_ASPECT } from "../lib/frame";
+import type { FrameMode, PhotoKind, Rect } from "../types";
+import { ASPECT, lockAspect, renderPhoto } from "../lib/frame";
 
 interface Props {
+  orig: Blob;
   src: string;
   size: { w: number; h: number };
   kind: PhotoKind;
   rect: Rect;
+  mode: FrameMode;
   auto: Rect;
-  onDone: (r: Rect) => void;
+  autoMode: FrameMode;
+  onDone: (r: { crop: Rect; mode: FrameMode }) => void;
   onCancel: () => void;
 }
 
 type Corner = "tl" | "tr" | "bl" | "br";
 type Drag = { mode: "move" | Corner; px: number; py: number; start: Rect };
 
-const MIN = 0.08;
+const MIN = 0.06;
 
-export function CropEditor({ src, size, kind, rect: initial, auto, onDone, onCancel }: Props) {
+export function CropEditor({ orig, src, size, kind, rect: initial, mode: initialMode, auto, autoMode, onDone, onCancel }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
   const [disp, setDisp] = useState({ w: 0, h: 0 });
   const [r, setR] = useState(initial);
+  const [mode, setMode] = useState(initialMode);
+  const [settled, setSettled] = useState(0);
+  const [preview, setPreview] = useState<string>();
   const drag = useRef<Drag | null>(null);
   // Normalised height per unit of normalised width that keeps a 4:5 frame in pixels.
-  const k = size.w / (size.h * WORN_ASPECT);
-  const locked = kind === "worn";
+  const k = size.w / (size.h * ASPECT);
+  const locked = mode === "crop";
 
   useLayoutEffect(() => {
     const el = stageRef.current!;
@@ -45,10 +51,32 @@ export function CropEditor({ src, size, kind, rect: initial, auto, onDone, onCan
     };
   }, []);
 
-  const down = (mode: Drag["mode"]) => (e: PointerEvent) => {
+  // Live 4:5 result for composed product shots, refreshed when a drag ends.
+  useEffect(() => {
+    if (mode !== "compose") return setPreview(undefined);
+    let live = true;
+    let url: string | undefined;
+    renderPhoto(orig, { kind, crop: r, mode }, 360).then((b) => {
+      if (!live) return;
+      url = URL.createObjectURL(b);
+      setPreview(url);
+    });
+    return () => {
+      live = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settled, mode]);
+
+  const switchMode = (m: FrameMode) => {
+    if (m === "crop") setR(lockAspect(r, size.w, size.h));
+    setMode(m);
+  };
+
+  const down = (m: Drag["mode"]) => (e: PointerEvent) => {
     e.stopPropagation();
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
-    drag.current = { mode, px: e.clientX, py: e.clientY, start: r };
+    drag.current = { mode: m, px: e.clientX, py: e.clientY, start: r };
   };
 
   const move = (e: PointerEvent) => {
@@ -70,10 +98,8 @@ export function CropEditor({ src, size, kind, rect: initial, auto, onDone, onCan
     const ay = sy > 0 ? s.y : s.y + s.h;
     const maxW = sx > 0 ? 1 - ax : ax;
     const maxH = sy > 0 ? 1 - ay : ay;
-    let w = (sx > 0 ? s.x + s.w + dx : s.x + dx) - ax;
-    let h = (sy > 0 ? s.y + s.h + dy : s.y + dy) - ay;
-    w *= sx;
-    h *= sy;
+    let w = ((sx > 0 ? s.x + s.w + dx : s.x + dx) - ax) * sx;
+    let h = ((sy > 0 ? s.y + s.h + dy : s.y + dy) - ay) * sy;
     if (locked) {
       w = Math.min(Math.max(w, h / k, MIN), maxW, maxH / k);
       h = w * k;
@@ -85,6 +111,7 @@ export function CropEditor({ src, size, kind, rect: initial, auto, onDone, onCan
   };
 
   const up = () => {
+    if (drag.current) setSettled((n) => n + 1);
     drag.current = null;
   };
 
@@ -103,16 +130,36 @@ export function CropEditor({ src, size, kind, rect: initial, auto, onDone, onCan
         </button>
         <span className="box">
           <span>{kind === "worn" ? "Worn shot" : "Item shot"}</span>
-          <span>{locked ? "4:5" : "Free"}</span>
+          <span>4:5</span>
         </span>
       </div>
-      <p className="crop-hint micro mute">
-        {kind === "worn" ? "Drag to frame the photo. Corners resize." : "Frame the garment. It sits centred on the board."}
-      </p>
+      <div className="crop-hint micro">
+        <span className="mute">
+          {mode === "compose"
+            ? "Box the garment. It's centred in a 4:5 frame for you."
+            : "Drag to frame. Corners resize."}
+        </span>
+        {kind === "item" && (
+          <span className="crop-modes" role="group" aria-label="Framing">
+            <button aria-pressed={mode === "compose"} onClick={() => switchMode("compose")}>
+              Composed
+            </button>
+            <button aria-pressed={mode === "crop"} onClick={() => switchMode("crop")}>
+              Crop
+            </button>
+          </span>
+        )}
+      </div>
       <div className="crop-stage" ref={stageRef}>
         <div className="crop-img" style={{ width: disp.w, height: disp.h }} onPointerMove={move} onPointerUp={up}>
           <img src={src} alt="" draggable={false} />
-          <div className="crop-rect" style={style} onPointerDown={down("move")} onPointerMove={move} onPointerUp={up}>
+          <div
+            className={`crop-rect${mode === "compose" ? " free" : ""}`}
+            style={style}
+            onPointerDown={down("move")}
+            onPointerMove={move}
+            onPointerUp={up}
+          >
             {(["tl", "tr", "bl", "br"] as Corner[]).map((c) => (
               <span
                 key={c}
@@ -125,13 +172,26 @@ export function CropEditor({ src, size, kind, rect: initial, auto, onDone, onCan
             ))}
           </div>
         </div>
+        {preview && (
+          <div className="crop-preview" aria-label="Result preview">
+            <img src={preview} alt="" />
+            <span className="micro">Result</span>
+          </div>
+        )}
       </div>
       <div className="bars">
-        <button className="bar light small" onClick={() => setR(auto)}>
+        <button
+          className="bar light small"
+          onClick={() => {
+            setR(auto);
+            setMode(autoMode);
+            setSettled((n) => n + 1);
+          }}
+        >
           <span>Reset</span>
           <span>↺</span>
         </button>
-        <button className="bar" onClick={() => onDone(r)}>
+        <button className="bar" onClick={() => onDone({ crop: r, mode })}>
           <span>Done</span>
           <span>→</span>
         </button>

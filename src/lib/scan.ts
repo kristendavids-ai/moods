@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { blobToBase64 } from "./image";
+import { blobToBase64, scanCopy } from "./image";
 import type { Colour, PhotoKind, Rect } from "../types";
 
 export interface ScannedPhoto {
@@ -34,10 +34,6 @@ For each image, also give:
 
 export class ScanError extends Error {}
 
-type Media = "image/jpeg" | "image/png" | "image/gif" | "image/webp";
-const mediaType = (b: Blob): Media =>
-  b.type === "image/jpeg" || b.type === "image/png" || b.type === "image/gif" ? b.type : "image/webp";
-
 export async function scanImages(apiKey: string, images: Blob[], categories: string[]): Promise<ScanResult> {
   if (!apiKey) throw new ScanError("Add your Anthropic API key in Settings to scan brands.");
 
@@ -45,7 +41,7 @@ export async function scanImages(apiKey: string, images: Blob[], categories: str
   const blocks = await Promise.all(
     images.map(async (b) => ({
       type: "image" as const,
-      source: { type: "base64" as const, media_type: mediaType(b), data: await blobToBase64(b) },
+      source: { type: "base64" as const, media_type: "image/jpeg" as const, data: await blobToBase64(await scanCopy(b)) },
     })),
   );
 

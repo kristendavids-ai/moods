@@ -1,20 +1,49 @@
-const MAX_EDGE = 1600;
+const MAX_ORIGINAL = 4096;
+const SCAN_EDGE = 1568; // the API downsizes anything larger, so sending more only costs bandwidth
 
-// Downscale and re-encode so IndexedDB stays small. Falls back to JPEG where WebP encode is unsupported.
-export async function compressImage(file: Blob): Promise<Blob> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-  const w = Math.round(bitmap.width * scale);
-  const h = Math.round(bitmap.height * scale);
-  const canvas = document.createElement("canvas");
-  canvas.width = w;
-  canvas.height = h;
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, w, h);
-  bitmap.close();
-  const webp = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/webp", 0.86));
+/** One high-quality encode. iOS Safari can't encode WebP from a canvas, so it gets JPEG 0.95. */
+export async function encodeHQ(canvas: HTMLCanvasElement): Promise<Blob> {
+  const webp = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/webp", 0.95));
   if (webp && webp.type === "image/webp") return webp;
   return new Promise<Blob>((resolve, reject) =>
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/jpeg", 0.86),
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/jpeg", 0.95),
+  );
+}
+
+async function redraw(file: Blob, maxEdge: number): Promise<HTMLCanvasElement> {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, maxEdge / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bmp.width * scale);
+  canvas.height = Math.round(bmp.height * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#fff"; // flatten transparency onto white
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  bmp.close();
+  return canvas;
+}
+
+/**
+ * The stored original. JPEG and WebP photos are kept byte-for-byte; PNG screenshots
+ * (often 3–6 MB) are re-encoded once at full resolution, which is visually lossless.
+ */
+export async function prepareOriginal(file: Blob): Promise<Blob> {
+  if (file.type === "image/jpeg" || file.type === "image/webp") {
+    const bmp = await createImageBitmap(file);
+    const fits = Math.max(bmp.width, bmp.height) <= MAX_ORIGINAL;
+    bmp.close();
+    if (fits) return file;
+  }
+  return encodeHQ(await redraw(file, MAX_ORIGINAL));
+}
+
+/** A small copy for Claude only; boxes come back normalised, so they map onto the original. */
+export async function scanCopy(original: Blob): Promise<Blob> {
+  const canvas = await redraw(original, SCAN_EDGE);
+  return new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("encode failed"))), "image/jpeg", 0.85),
   );
 }
 
