@@ -1904,137 +1904,108 @@ img {
   margin: 0 0 8px;
 }
 
-/* ── All: category index (panels crossed by labelled lines) ── */
-.allx {
-  padding: 6px 0 4px;
-}
-
-.allx-stage {
+/* ── Index: vertical roulette of pieces ───────────────── */
+.wheel {
   position: relative;
-  height: min(68vh, 560px);
-  min-height: 380px;
+  height: calc(100dvh - var(--wheel-top, 80px) - 56px - var(--safe-bottom));
+  min-height: 360px;
   overflow: hidden;
 }
 
-.allx-panels {
+.wheel-scroll {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-.allx-panel {
-  position: relative;
-  flex: none;
-  margin: 0 -0.4%;
+.wheel-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.wheel-stage {
+  position: sticky;
+  top: 0;
+  overflow: hidden;
+}
+
+.wheel-snap {
+  scroll-snap-align: center;
+}
+
+.wheel-panel {
+  position: absolute;
   overflow: hidden;
   background: var(--plate);
-  opacity: 0;
-  transform: translateY(14px) scaleY(0.92);
-  animation: allx-rise 0.8s var(--ease) forwards;
+  will-change: transform, top, height;
 }
 
-.allx-panel .ph {
+.wheel-panel .ph {
   object-fit: cover;
   padding: 0;
 }
 
-.allx-panel:active {
-  opacity: 0.8;
+.wheel-panel[aria-current="true"] {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
 }
 
-.allx-lines {
+.wheel-lines {
   position: absolute;
-  z-index: 20;
+  z-index: 200;
   inset: 0;
   pointer-events: none;
-  overflow: visible;
 }
 
-.allx-lines line {
+.wheel-lines line {
   stroke: #9c968c;
   stroke-width: 1;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: allx-draw 0.9s var(--ease) forwards;
 }
 
-.allx-lines g line {
-  animation-delay: inherit;
-}
-
-.allx-lines circle {
+.wheel-lines circle {
   fill: #141821;
-  opacity: 0;
-  animation: fade-in 0.4s var(--ease) 0.5s forwards;
 }
 
-.allx-lines g {
-  animation-delay: inherit;
-}
-
-.allx-label {
+.wheel-label {
   position: absolute;
-  z-index: 21;
+  z-index: 201;
   transform: translateY(-100%);
   margin-bottom: 4px;
   padding: 2px 4px;
   background: rgba(251, 251, 249, 0.86);
-  font: 400 15px/1 var(--f-text);
+  font-family: var(--f-text);
+  line-height: 1;
   letter-spacing: -0.01em;
-  color: var(--ink);
   white-space: nowrap;
-  opacity: 0;
-  animation: fade-in 0.5s var(--ease) 0.6s forwards;
 }
 
-.allx-label sup {
-  font-size: 9px;
-  margin-left: 2px;
-  color: var(--mute);
+.wheel-caption {
+  position: absolute;
+  z-index: 202;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 16px var(--inset) 6px;
+  background: linear-gradient(rgba(251, 251, 249, 0), var(--paper) 45%);
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 11.5px;
+  pointer-events: auto;
 }
 
-.allx-hint {
-  margin: 0;
-  padding: 2px var(--inset) 14px;
-  text-align: center;
-}
-
-@keyframes allx-rise {
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-@keyframes allx-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-@keyframes fade-in {
-  to {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .allx-panel,
-  .allx-label,
-  .allx-lines circle {
-    opacity: 1;
-    transform: none;
-  }
-  .allx-lines line {
-    stroke-dashoffset: 0;
-  }
+.wheel-caption button {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @media (min-width: 720px) {
-  .allx-stage {
-    max-width: 1100px;
+  .wheel {
+    max-width: 720px;
     margin: 0 auto;
   }
 }
+

@@ -97,7 +97,7 @@ export function ItemForm({ categories, knownSeasons, brands, defaultCategory, ed
   const [d, setD] = useState<Draft>(() => ({
     brand: editing?.brand ?? "",
     name: editing?.name ?? "",
-    category: editing?.category ?? (defaultCategory && defaultCategory !== "All" ? defaultCategory : categories[0]),
+    category: editing?.category ?? (defaultCategory && categories.includes(defaultCategory) ? defaultCategory : categories[0]),
     season: editing?.season ?? currentSeason(),
     status: editing?.status ?? "wishlist",
     size: editing?.size ?? "",

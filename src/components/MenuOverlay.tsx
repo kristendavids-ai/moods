@@ -45,7 +45,7 @@ export function MenuOverlay(p: Props) {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const count = (c: string) => (c === "All" ? p.items.length : p.items.filter((i) => i.category === c).length);
+  const count = (c: string) => (c === "All" || c === "Index" ? p.items.length : p.items.filter((i) => i.category === c).length);
   const pick = (f: Partial<Filters>) => close(() => p.onFilters({ ...p.filters, ...f }));
   const toggleStatus = (s: Status) => pick({ status: p.filters.status === s ? null : s });
   const toggleSeason = (s: string) => pick({ season: p.filters.season === s ? null : s });
@@ -72,7 +72,7 @@ export function MenuOverlay(p: Props) {
               </li>
             ))}
             {p.section === "board" && <li className="menu-rule" aria-hidden />}
-            {p.section === "board" && ["All", ...p.categories].map((c, i) => (
+            {p.section === "board" && ["Index", "All", ...p.categories].map((c, i) => (
               <li key={c} className="menu-sub" style={{ animationDelay: `${90 + i * 18}ms` }}>
                 <button
                   className="menu-cat"

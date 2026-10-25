@@ -30,7 +30,10 @@ import { Header, pad3 } from "./components/Header";
 import { Hanger } from "./components/Hanger";
 import { CategoryTabs } from "./components/CategoryTabs";
 import { Collage } from "./components/Collage";
-import { AllIndex } from "./components/AllIndex";
+import { Wheel } from "./components/Wheel";
+
+/** The board opens on the Index roulette; All is the collage of every piece. */
+const INDEX = "Index";
 import { MenuOverlay } from "./components/MenuOverlay";
 import { FilterSheet } from "./components/FilterSheet";
 import { ItemDetail } from "./components/ItemDetail";
@@ -58,7 +61,7 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [categories, setCategories] = useState(getCategories);
-  const [filters, setFilters] = useState<Filters>({ category: "All", season: null, status: null });
+  const [filters, setFilters] = useState<Filters>({ category: INDEX, season: null, status: null });
   const [view, setView] = useState<View>({ name: "board" });
   const [menu, setMenu] = useState(false);
   const [sheet, setSheet] = useState(false);
@@ -159,7 +162,7 @@ export default function App() {
 
   const visible = items.filter(
     (i) =>
-      (filters.category === "All" || i.category === filters.category) &&
+      (filters.category === "All" || filters.category === INDEX || i.category === filters.category) &&
       (!filters.season || i.season === filters.season) &&
       (!filters.status || i.status === filters.status),
   );
@@ -374,7 +377,7 @@ export default function App() {
           open={menu}
           count={items.length}
           onToggle={() => setMenu(true)}
-          onHome={() => setFilters({ category: "All", season: null, status: null })}
+          onHome={() => setFilters({ category: INDEX, season: null, status: null })}
         />
         <CategoryTabs
           categories={allCategories}
@@ -400,21 +403,20 @@ export default function App() {
           <p className="mute">{items.length ? "Try another category or season." : "Add a photo or screenshot to begin."}</p>
         </div>
       ) : (
-        <>
-          {filters.category === "All" && (
-            <AllIndex
-              items={visible}
-              categories={allCategories}
-              onCategory={(category) => setFilters({ ...filters, category })}
-              onOpen={(item) => go({ name: "item", id: item.id })}
-            />
-          )}
+        filters.category === INDEX ? (
+          <Wheel
+            key={`${filters.season}|${filters.status}`}
+            items={visible}
+            onCategory={(category) => setFilters({ ...filters, category })}
+            onOpen={(item) => go({ name: "item", id: item.id })}
+          />
+        ) : (
           <Collage
             key={`${filters.category}|${filters.season}|${filters.status}`}
             items={visible}
             onOpen={(item) => go({ name: "item", id: item.id })}
           />
-        </>
+        )
       )}
 
       <div className="bars">
