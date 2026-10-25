@@ -1885,3 +1885,21 @@ img {
     display: none !important;
   }
 }
+
+/* Brand field with suggestions from the Brands list */
+.brand-input {
+  position: relative;
+  padding-bottom: 2px;
+}
+
+.brand-input .city-results {
+  margin-bottom: 8px;
+}
+
+.city-results button.active {
+  background: var(--band);
+}
+
+.brand-new {
+  margin: 0 0 8px;
+}

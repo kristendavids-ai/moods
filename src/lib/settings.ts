@@ -42,3 +42,8 @@ export const getSection = (): Section => {
   return s === "brands" || s === "boutiques" ? s : "board";
 };
 export const setSection = (s: Section) => write(KEY_SECTION, s);
+
+// Board brands are copied into Brands once; later deletions from Brands must stick.
+const KEY_BRANDS_SYNCED = "moods.brandsFromBoard";
+export const brandsSynced = () => read(KEY_BRANDS_SYNCED) === "1";
+export const markBrandsSynced = () => write(KEY_BRANDS_SYNCED, "1");

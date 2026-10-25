@@ -14,8 +14,11 @@ import {
   saveItem,
   type PhotoWrite,
 } from "./db/store";
+import { brandKey, findBrand } from "./lib/places";
 import {
+  brandsSynced,
   getCategories,
+  markBrandsSynced,
   getSection,
   setCategories as persistCategories,
   setSection as persistSection,
@@ -72,6 +75,45 @@ export default function App() {
     () => Promise.all([listItems().then((all) => (setItems(all), setLoaded(true))), reloadPlaces()]),
     [reloadPlaces],
   );
+
+  /** Adds any of these brand names missing from Brands; returns the ones it created. */
+  const addMissingBrands = useCallback(
+    async (names: string[]) => {
+      const known = await listBrands();
+      const created: Brand[] = [];
+      for (const raw of names) {
+        const name = raw.trim();
+        if (!name || findBrand([...known, ...created], name)) continue;
+        const b: Brand = { id: newId(), name, euTax: "unknown", createdAt: Date.now() };
+        await saveBrand(b);
+        created.push(b);
+      }
+      if (created.length) await reloadPlaces();
+      return created;
+    },
+    [reloadPlaces],
+  );
+
+  // One-time catch-up: brands of pieces already on the board join the Brands list.
+  useEffect(() => {
+    if (!loaded || brandsSynced()) return;
+    markBrandsSynced();
+    // Per brand, use the spelling used most often (earliest piece breaks ties).
+    const spellings = new Map<string, Map<string, { n: number; first: number }>>();
+    for (const i of items) {
+      const name = i.brand.trim();
+      if (!name) continue;
+      const k = brandKey(name);
+      const forms = spellings.get(k) ?? new Map();
+      const f = forms.get(name) ?? { n: 0, first: i.createdAt };
+      forms.set(name, { n: f.n + 1, first: Math.min(f.first, i.createdAt) });
+      spellings.set(k, forms);
+    }
+    const names = [...spellings.values()].map(
+      (forms) => [...forms.entries()].sort((a, b) => b[1].n - a[1].n || a[1].first - b[1].first)[0][0],
+    );
+    addMissingBrands(names);
+  }, [loaded, items, addMissingBrands]);
   useEffect(() => {
     reload();
   }, [reload]);
@@ -126,9 +168,11 @@ export default function App() {
   const onSave = async (item: Item, writes: PhotoWrite[], removed: string[]) => {
     await saveItem(item, writes, removed);
     [...writes.map((w) => w.photo.id), ...removed].forEach(revokeUrl);
+    const [created] = await addMissingBrands([item.brand]);
     await reload();
     go({ name: "item", id: item.id });
-    toast(view.name === "edit" ? "Saved" : "Added to board");
+    const base = view.name === "edit" ? "Saved" : "Added to board";
+    toast(created ? `${base} · ${created.name} added to Brands` : base);
   };
 
   if (view.name === "add" || (view.name === "edit" && current)) {
@@ -137,6 +181,7 @@ export default function App() {
         key={view.name}
         categories={allCategories}
         knownSeasons={seasons}
+        brands={brands}
         defaultCategory={filters.category}
         editing={view.name === "edit" ? current : undefined}
         addKind={view.name === "edit" ? view.addKind : undefined}

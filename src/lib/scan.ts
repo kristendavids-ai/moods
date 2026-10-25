@@ -32,9 +32,18 @@ For each image, also give:
   - for "item": tight around the garment itself, excluding any text, prices, buttons, other products and phone or browser interface.
   - for "worn": the photograph only, excluding the phone status bar, browser bars, app headers, buttons, captions and any other interface or text around it.`;
 
+// Keeps Claude's spelling in line with the user's own list, so scans don't create near-duplicates.
+const brandHint = (names: string[]) =>
+  names.length ? `\n\nIf the brand is one of these, use exactly this spelling: ${names.slice(0, 300).join(", ")}.` : "";
+
 export class ScanError extends Error {}
 
-export async function scanImages(apiKey: string, images: Blob[], categories: string[]): Promise<ScanResult> {
+export async function scanImages(
+  apiKey: string,
+  images: Blob[],
+  categories: string[],
+  knownBrands: string[] = [],
+): Promise<ScanResult> {
   if (!apiKey) throw new ScanError("Add your Anthropic API key in Settings to scan brands.");
 
   const client = new Anthropic({ apiKey, dangerouslyAllowBrowser: true });
@@ -85,7 +94,7 @@ export async function scanImages(apiKey: string, images: Blob[], categories: str
         },
       },
     },
-    messages: [{ role: "user", content: [...blocks, { type: "text", text: PROMPT(images.length) }] }],
+    messages: [{ role: "user", content: [...blocks, { type: "text", text: PROMPT(images.length) + brandHint(knownBrands) }] }],
   });
 
   if (response.stop_reason === "refusal") throw new ScanError("Couldn't read this image.");

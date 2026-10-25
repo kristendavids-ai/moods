@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { FrameMode, Item, Photo, PhotoKind, Rect, Status } from "../types";
+import type { Brand, FrameMode, Item, Photo, PhotoKind, Rect, Status } from "../types";
 import { STATUSES } from "../types";
 import { prepareOriginal } from "../lib/image";
 import { autoFrame, imageSize, lockAspect, renderPhoto, type Framing } from "../lib/frame";
@@ -10,10 +10,14 @@ import { getOriginal, newId, type PhotoWrite } from "../db/store";
 import { Hanger } from "./Hanger";
 import { PhotoView } from "./PhotoView";
 import { CropEditor } from "./CropEditor";
+import { BrandInput } from "./BrandInput";
+import { findBrand } from "../lib/places";
 
 interface Props {
   categories: string[];
   knownSeasons: string[];
+  /** The Brands list: suggestions while typing, and the spelling scans are matched to. */
+  brands: Brand[];
   defaultCategory?: string;
   editing?: Item;
   /** Opens the picker straight away for this slot (from "+ Item shot" on the detail page). */
@@ -58,7 +62,7 @@ type ScanState = { kind: "idle" } | { kind: "scanning" } | { kind: "done" } | { 
 const other = (k: PhotoKind): PhotoKind => (k === "worn" ? "item" : "worn");
 const label = (k: PhotoKind) => (k === "worn" ? "Worn" : "Item");
 
-export function ItemForm({ categories, knownSeasons, defaultCategory, editing, addKind, onCancel, onSave }: Props) {
+export function ItemForm({ categories, knownSeasons, brands, defaultCategory, editing, addKind, onCancel, onSave }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const forced = useRef<PhotoKind | undefined>(undefined);
   const [slots, setSlots] = useState<Slot[]>(() =>
@@ -167,7 +171,7 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
 
   const applyFields = (r: ScanResult) => {
     const patch: Partial<Draft> = {};
-    if (r.brand) patch.brand = r.brand;
+    if (r.brand) patch.brand = findBrand(brands, r.brand)?.name ?? r.brand;
     if (r.name) patch.name = r.name;
     if (r.category && categories.includes(r.category)) patch.category = r.category;
     if (r.season) patch.season = r.season;
@@ -188,7 +192,8 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
     try {
       const origs = await Promise.all(targets.map(ensureOrig));
       const sendable = targets.filter((_, i) => origs[i]);
-      const result = await scanImages(getApiKey(), origs.filter((o): o is Blob => !!o), categories);
+      const recent = [...brands].sort((a, b) => b.createdAt - a.createdAt).map((b) => b.name);
+      const result = await scanImages(getApiKey(), origs.filter((o): o is Blob => !!o), categories, recent);
       applyFields(result);
 
       // Kinds: trust Claude unless the user chose; never leave two photos of the same kind.
@@ -336,7 +341,7 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
       id: editing?.id ?? newId(),
       photos,
       createdAt: editing?.createdAt ?? Date.now(),
-      brand: d.brand.trim(),
+      brand: findBrand(brands, d.brand)?.name ?? d.brand.trim(),
       name: d.name.trim() || undefined,
       category: d.category,
       season: d.season.trim().toUpperCase() || undefined,
@@ -433,16 +438,16 @@ export function ItemForm({ categories, knownSeasons, defaultCategory, editing, a
       {scan.kind === "error" && <div className="err">{scan.message}</div>}
 
       <div className="form">
-        <label className="field">
+        <div className="field top">
           <span>Brand</span>
-          <input
+          <BrandInput
             className={cls("brand")}
             value={d.brand}
+            brands={brands}
             placeholder={reading ? "Reading…" : "e.g. Our Legacy"}
-            onChange={(e) => set("brand", e.target.value)}
-            autoCapitalize="words"
+            onChange={(v) => set("brand", v)}
           />
-        </label>
+        </div>
         <label className="field">
           <span>Piece</span>
           <input

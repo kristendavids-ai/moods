@@ -60,3 +60,26 @@ export async function searchCities(query: string, limit = 8): Promise<City[]> {
   }
   return [...starts, ...words].slice(0, limit).map(([name, , country, lat, lon]) => ({ name, country, lat, lon }));
 }
+
+/** Brand identity for matching: accents, case, spaces and punctuation don't count. */
+export const brandKey = (name: string) =>
+  name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+export function findBrand<T extends { name: string }>(brands: T[], name: string): T | undefined {
+  const k = brandKey(name);
+  return k ? brands.find((b) => brandKey(b.name) === k) : undefined;
+}
+
+/** Names starting with the query first, then names containing it; alphabetical within each. */
+export function suggestBrands<T extends { name: string }>(brands: T[], query: string, limit = 6): T[] {
+  const q = brandKey(query);
+  if (!q) return [];
+  const byName = (a: T, b: T) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+  const starts = brands.filter((b) => brandKey(b.name).startsWith(q)).sort(byName);
+  const contains = brands.filter((b) => !brandKey(b.name).startsWith(q) && brandKey(b.name).includes(q)).sort(byName);
+  return [...starts, ...contains].slice(0, limit);
+}
