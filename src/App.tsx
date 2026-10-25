@@ -30,6 +30,7 @@ import { Header, pad3 } from "./components/Header";
 import { Hanger } from "./components/Hanger";
 import { CategoryTabs } from "./components/CategoryTabs";
 import { Collage } from "./components/Collage";
+import { AllIndex } from "./components/AllIndex";
 import { MenuOverlay } from "./components/MenuOverlay";
 import { FilterSheet } from "./components/FilterSheet";
 import { ItemDetail } from "./components/ItemDetail";
@@ -399,11 +400,21 @@ export default function App() {
           <p className="mute">{items.length ? "Try another category or season." : "Add a photo or screenshot to begin."}</p>
         </div>
       ) : (
-        <Collage
-          key={`${filters.category}|${filters.season}|${filters.status}`}
-          items={visible}
-          onOpen={(item) => go({ name: "item", id: item.id })}
-        />
+        <>
+          {filters.category === "All" && (
+            <AllIndex
+              items={visible}
+              categories={allCategories}
+              onCategory={(category) => setFilters({ ...filters, category })}
+              onOpen={(item) => go({ name: "item", id: item.id })}
+            />
+          )}
+          <Collage
+            key={`${filters.category}|${filters.season}|${filters.status}`}
+            items={visible}
+            onOpen={(item) => go({ name: "item", id: item.id })}
+          />
+        </>
       )}
 
       <div className="bars">
