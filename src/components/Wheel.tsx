@@ -11,17 +11,15 @@ interface Props {
 
 interface Entry {
   item: Item;
-  photo?: Photo;
-  /** Solid block of the piece's colour instead of a photo. */
-  swatch?: string;
-  /** Width as a share of the stage, before perspective. */
+  photo: Photo;
+  /** Slight width variation around the column, for rhythm without clutter. */
   w: number;
 }
 
 /** Scroll distance per piece; one snap point each. */
 const STEP = 96;
 /** Angle between neighbouring pieces on the wheel, in radians. */
-const ARC = 0.4;
+const ARC = 0.6;
 
 const shuffle = <T,>(a: T[]) => {
   const b = [...a];
@@ -33,19 +31,13 @@ const shuffle = <T,>(a: T[]) => {
 };
 
 // Each visit: a fresh order, and for each piece a random one of its photos (worn one
-// time, product the next), with an occasional block of its colour.
+// time, product the next).
 function pick(items: Item[]): Entry[] {
-  let swatches = 0;
-  return shuffle(items.filter((i) => i.photos.length)).map((item, _n, all) => {
-    const swatch = item.colour && swatches < 2 && all.length > 5 && Math.random() < 0.15 ? item.colour.hex : undefined;
-    if (swatch) swatches++;
-    return {
-      item,
-      swatch,
-      photo: swatch ? undefined : item.photos[Math.floor(Math.random() * item.photos.length)],
-      w: swatch ? 0.36 + Math.random() * 0.14 : 0.58 + Math.random() * 0.22,
-    };
-  });
+  return shuffle(items.filter((i) => i.photos.length)).map((item) => ({
+    item,
+    photo: item.photos[Math.floor(Math.random() * item.photos.length)],
+    w: 0.95 + Math.random() * 0.1,
+  }));
 }
 
 /**
@@ -88,27 +80,34 @@ export function Wheel({ items, onCategory, onOpen }: Props) {
   }, []);
 
   const { w, h } = size;
-  const R = h * 0.44;
+  const R = h * 0.47;
+  // The centre piece shows whole, as a 4:5 image; everything else is a strip of it.
+  const centreH = Math.min(h * 0.52, (w * 0.74) / 0.8);
+  const centreW = centreH * 0.8;
   const current = Math.min(entries.length - 1, Math.max(0, Math.round(offset)));
   const scrollToIndex = (i: number) => scroller.current?.scrollTo({ top: i * STEP, behavior: "smooth" });
 
   // Place every piece within a quarter-turn of the front.
+  // Neighbours shrink fast (cos³) into short strips and fade steeply (cos⁶), so they hint
+  // at what's next without crowding the centre; beyond the second they're hidden.
   const placed = entries.flatMap((e, i) => {
     const theta = (i - offset) * ARC;
-    if (Math.abs(theta) > 1.42) return [];
+    if (Math.abs(theta) > 1.25) return [];
     const c = Math.cos(theta);
+    const fade = Math.pow(c, 6);
     const y = h / 2 + R * Math.sin(theta);
-    const ph = h * 0.42 * c;
-    const pw = Math.min(w * 0.82, w * e.w * (0.62 + 0.38 * c));
-    const half = w * (0.3 + 0.17 * c);
-    return [{ e, i, c, y, ph, pw, l: w / 2 - half, r: w / 2 + half }];
+    const ph = centreH * Math.max(0.1, Math.pow(c, 3));
+    // Exactly 4:5 at the centre; a touch of width variation only as pieces turn away.
+    const pw = Math.min(w * 0.84, centreW * (0.86 + 0.14 * c) * (1 + (e.w - 1) * (1 - c)));
+    const half = w * (0.33 + 0.14 * c);
+    return [{ e, i, c, fade, y, ph, pw, l: w / 2 - half, r: w / 2 + half }];
   });
   const inset = w * 0.06;
   const connectors = placed.slice(0, -1).flatMap((a, k) => {
     const b = placed[k + 1];
     if (b.i !== a.i + 1) return [];
     const [wide, narrow] = a.c >= b.c ? [a, b] : [b, a];
-    const o = Math.min(a.c, b.c);
+    const o = Math.min(a.fade, b.fade);
     return [
       { x1: wide.l + inset, y1: wide.y, x2: narrow.l, y2: narrow.y, o },
       { x1: wide.r - inset, y1: wide.y, x2: narrow.r, y2: narrow.y, o },
@@ -120,49 +119,48 @@ export function Wheel({ items, onCategory, onOpen }: Props) {
     <section className="wheel" ref={wrap} aria-label="Index of pieces" aria-roledescription="carousel">
       <div className="wheel-scroll" ref={scroller}>
         <div className="wheel-stage" style={{ height: h, marginBottom: -h }}>
-          {placed.map(({ e, i, c, y, ph, pw }) => (
+          {placed.map(({ e, i, c, fade, y, ph, pw }) => (
             <button
               key={`${e.item.id}:${i}`}
-              className={`wheel-panel${e.swatch ? " swatch" : ""}`}
+              className="wheel-panel"
               style={{
                 width: pw,
                 height: ph,
                 left: (w - pw) / 2,
                 top: y - ph / 2,
                 zIndex: Math.round(c * 100),
-                opacity: 0.25 + 0.75 * c * c,
-                background: e.swatch,
+                opacity: 0.1 + 0.9 * fade,
               }}
               aria-label={[e.item.brand, e.item.name].filter(Boolean).join(" ") || "Piece"}
               aria-current={i === current}
               tabIndex={i === current ? 0 : -1}
               onClick={() => (i === current ? onOpen(e.item) : scrollToIndex(i))}
             >
-              {e.photo && <PhotoView photo={e.photo} />}
+              <PhotoView photo={e.photo} />
             </button>
           ))}
 
           {w > 0 && (
             <svg className="wheel-lines" width={w} height={h} viewBox={`0 0 ${w} ${h}`} aria-hidden>
-              {placed.map(({ i, c, y, l, r }) => (
-                <g key={i} opacity={0.2 + 0.8 * c * c}>
+              {placed.map(({ i, c, fade, y, l, r }) => (
+                <g key={i} opacity={fade}>
                   <line x1={l} y1={y} x2={r} y2={y} />
-                  <circle cx={l} cy={y} r={2.2 + 1.4 * c} />
-                  <circle cx={r} cy={y} r={2.2 + 1.4 * c} />
+                  <circle cx={l} cy={y} r={2 + 1.5 * c} />
+                  <circle cx={r} cy={y} r={2 + 1.5 * c} />
                 </g>
               ))}
               {connectors.map((k, n) => (
-                <line key={n} x1={k.x1} y1={k.y1} x2={k.x2} y2={k.y2} opacity={0.2 + 0.8 * k.o * k.o} />
+                <line key={n} x1={k.x1} y1={k.y1} x2={k.x2} y2={k.y2} opacity={k.o} />
               ))}
             </svg>
           )}
 
-          {placed.map(({ e, i, c, y, r }) =>
-            c > 0.55 ? (
+          {placed.map(({ e, i, c, fade, y, r }) =>
+            fade > 0.15 ? (
               <button
                 key={`label-${i}`}
                 className="wheel-label"
-                style={{ top: y, right: Math.max(4, w - r + 2), opacity: (c - 0.55) / 0.45, fontSize: 11 + 4 * c }}
+                style={{ top: y, right: Math.max(4, w - r + 2), opacity: fade, fontSize: 11 + 4 * Math.pow(c, 4) }}
                 tabIndex={i === current ? 0 : -1}
                 onClick={() => onCategory(e.item.category)}
               >
