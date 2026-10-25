@@ -3,8 +3,18 @@ import type { Filters, Item, Status } from "../types";
 import { STATUSES, boardPhoto } from "../types";
 import { Header } from "./Header";
 import { useImage } from "../lib/useImage";
+import type { Section } from "../lib/settings";
+
+const SECTIONS: { id: Section; label: string }[] = [
+  { id: "board", label: "Board" },
+  { id: "brands", label: "Brands" },
+  { id: "boutiques", label: "Boutiques" },
+];
 
 interface Props {
+  section: Section;
+  counts: Record<Section, number>;
+  onSection: (s: Section) => void;
   categories: string[];
   seasons: string[];
   items: Item[];
@@ -47,10 +57,23 @@ export function MenuOverlay(p: Props) {
         <div className="menu-bg" style={bg ? { backgroundImage: `url(${bg})` } : undefined} />
         <div className="menu-glass" />
         <div className="menu-inner">
-          <Header open count={p.items.length} onToggle={() => close()} />
+          <Header open count={p.counts[p.section]} onToggle={() => close()} />
           <ul className="menu-list">
-            {["All", ...p.categories].map((c, i) => (
-              <li key={c} style={{ animationDelay: `${40 + i * 18}ms` }}>
+            {SECTIONS.map((s, i) => (
+              <li key={s.id} style={{ animationDelay: `${20 + i * 18}ms` }}>
+                <button
+                  className="menu-cat menu-section"
+                  aria-current={p.section === s.id}
+                  onClick={() => close(() => p.onSection(s.id))}
+                >
+                  {s.label}
+                  {p.counts[s.id] > 0 && <sup>{p.counts[s.id]}</sup>}
+                </button>
+              </li>
+            ))}
+            {p.section === "board" && <li className="menu-rule" aria-hidden />}
+            {p.section === "board" && ["All", ...p.categories].map((c, i) => (
+              <li key={c} className="menu-sub" style={{ animationDelay: `${90 + i * 18}ms` }}>
                 <button
                   className="menu-cat"
                   aria-current={p.filters.category === c}
@@ -63,7 +86,7 @@ export function MenuOverlay(p: Props) {
             ))}
           </ul>
 
-          {p.seasons.length > 0 && (
+          {p.section === "board" && p.seasons.length > 0 && (
             <div className="menu-row">
               <span className="label">Season</span>
               {p.seasons.map((s) => (
@@ -74,8 +97,8 @@ export function MenuOverlay(p: Props) {
             </div>
           )}
           <div className="menu-row">
-            <span className="label">Status</span>
-            {STATUSES.map((s) => (
+            <span className="label">{p.section === "board" ? "Status" : ""}</span>
+            {p.section === "board" && STATUSES.map((s) => (
               <button key={s.id} aria-pressed={p.filters.status === s.id} onClick={() => toggleStatus(s.id)}>
                 {s.label}
               </button>
@@ -84,18 +107,20 @@ export function MenuOverlay(p: Props) {
             <button onClick={() => close(p.onSettings)}>Settings</button>
           </div>
 
-          <button
-            className="menu-feature"
-            onClick={() => close(() => (latest ? p.onOpenItem(latest) : p.onAdd()))}
-          >
-            <span className="txt">
-              <span>
-                {latest ? "Latest addition" : "Start your board"} <span className="plus">+</span>
+          {p.section === "board" && (
+            <button
+              className="menu-feature"
+              onClick={() => close(() => (latest ? p.onOpenItem(latest) : p.onAdd()))}
+            >
+              <span className="txt">
+                <span>
+                  {latest ? "Latest addition" : "Start your board"} <span className="plus">+</span>
+                </span>
+                <small>{latest ? [latest.brand, latest.name].filter(Boolean).join(" — ") || "View" : "Add a piece"}</small>
               </span>
-              <small>{latest ? [latest.brand, latest.name].filter(Boolean).join(" — ") || "View" : "Add a piece"}</small>
-            </span>
-            {bg && <img src={bg} alt="" />}
-          </button>
+              {bg && <img src={bg} alt="" />}
+            </button>
+          )}
         </div>
       </nav>
     </>

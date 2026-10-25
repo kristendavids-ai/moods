@@ -1,18 +1,26 @@
 import { openDB, type DBSchema } from "idb";
-import { FULL, type Item, type Photo } from "../types";
+import { FULL, type Boutique, type Brand, type Item, type Photo } from "../types";
 import { base64ToBlob, blobToBase64 } from "../lib/image";
 import { renderPhoto } from "../lib/frame";
 
 interface MoodsDB extends DBSchema {
   items: { key: string; value: Item; indexes: { createdAt: number } };
   images: { key: string; value: Blob };
+  brands: { key: string; value: Brand };
+  boutiques: { key: string; value: Boutique };
 }
 
-const dbPromise = openDB<MoodsDB>("moods", 1, {
-  upgrade(db) {
-    const items = db.createObjectStore("items", { keyPath: "id" });
-    items.createIndex("createdAt", "createdAt");
-    db.createObjectStore("images");
+const dbPromise = openDB<MoodsDB>("moods", 2, {
+  upgrade(db, oldVersion) {
+    if (oldVersion < 1) {
+      const items = db.createObjectStore("items", { keyPath: "id" });
+      items.createIndex("createdAt", "createdAt");
+      db.createObjectStore("images");
+    }
+    if (oldVersion < 2) {
+      db.createObjectStore("brands", { keyPath: "id" });
+      db.createObjectStore("boutiques", { keyPath: "id" });
+    }
   },
 });
 
@@ -78,10 +86,42 @@ export async function deleteItem(item: Item) {
 
 export async function clearAll() {
   const db = await dbPromise;
-  const tx = db.transaction(["items", "images"], "readwrite");
-  await tx.objectStore("items").clear();
-  await tx.objectStore("images").clear();
+  const tx = db.transaction(["items", "images", "brands", "boutiques"], "readwrite");
+  await Promise.all([...tx.objectStoreNames].map((n) => tx.objectStore(n).clear()));
   await tx.done;
+}
+
+const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+
+export async function listBrands(): Promise<Brand[]> {
+  return (await (await dbPromise).getAll("brands")).sort(byName);
+}
+
+export async function saveBrand(brand: Brand) {
+  await (await dbPromise).put("brands", brand);
+}
+
+/** Deletes the brand and unlinks it from every boutique that stocked it. */
+export async function deleteBrand(id: string) {
+  const db = await dbPromise;
+  const tx = db.transaction(["brands", "boutiques"], "readwrite");
+  await tx.objectStore("brands").delete(id);
+  for (const b of await tx.objectStore("boutiques").getAll()) {
+    if (b.brandIds.includes(id)) await tx.objectStore("boutiques").put({ ...b, brandIds: b.brandIds.filter((x) => x !== id) });
+  }
+  await tx.done;
+}
+
+export async function listBoutiques(): Promise<Boutique[]> {
+  return (await (await dbPromise).getAll("boutiques")).sort(byName);
+}
+
+export async function saveBoutique(boutique: Boutique) {
+  await (await dbPromise).put("boutiques", boutique);
+}
+
+export async function deleteBoutique(id: string) {
+  await (await dbPromise).delete("boutiques", id);
 }
 
 type Encoded = { type: string; data: string };
@@ -90,8 +130,11 @@ const decode = (e: Encoded) => base64ToBlob(e.data, e.type);
 
 interface BackupV2 {
   app: "moods";
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   items: (Item & { blobs: Record<string, Encoded> })[];
+  /** v4+ */
+  brands?: Brand[];
+  boutiques?: Boutique[];
 }
 
 interface BackupV1 {
@@ -100,9 +143,10 @@ interface BackupV1 {
   items: (LegacyItem & { image?: Encoded })[];
 }
 
-// v3 carries originals only for framed photos; their display images are re-rendered on import.
+// v3+ carries originals only for framed photos; their display images are re-rendered on import.
+// v4 adds brands and boutiques.
 export async function exportBackup(): Promise<Blob> {
-  const out: BackupV2 = { app: "moods", version: 3, items: [] };
+  const out: BackupV2 = { app: "moods", version: 4, items: [], brands: await listBrands(), boutiques: await listBoutiques() };
   for (const item of await listItems()) {
     const blobs: Record<string, Encoded> = {};
     for (const p of item.photos) {
@@ -119,7 +163,7 @@ export async function exportBackup(): Promise<Blob> {
 }
 
 // Merges by id, so importing the same backup twice is harmless.
-export async function importBackup(file: Blob): Promise<number> {
+export async function importBackup(file: Blob): Promise<{ items: number; brands: number; boutiques: number }> {
   const parsed = JSON.parse(await file.text()) as BackupV1 | BackupV2;
   if (parsed.app !== "moods" || !Array.isArray(parsed.items)) throw new Error("Not a MOODS backup");
   const db = await dbPromise;
@@ -139,5 +183,9 @@ export async function importBackup(file: Blob): Promise<number> {
     }
     await db.put("items", item);
   }
-  return parsed.items.length;
+  const brands = parsed.version === 1 ? [] : (parsed.brands ?? []);
+  const boutiques = parsed.version === 1 ? [] : (parsed.boutiques ?? []);
+  for (const b of brands) await db.put("brands", b);
+  for (const b of boutiques) await db.put("boutiques", b);
+  return { items: parsed.items.length, brands: brands.length, boutiques: boutiques.length };
 }

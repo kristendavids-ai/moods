@@ -59,3 +59,40 @@ export const FULL: Rect = { x: 0, y: 0, w: 1, h: 1 };
 export const boardPhoto = (item: Item) => item.photos.find((p) => p.kind === "item") ?? item.photos[0];
 export const heroPhotos = (item: Item) =>
   [...item.photos].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "worn" ? -1 : 1));
+
+/** Duties & VAT when shipping to the EU: paid at checkout, due on delivery, or not yet checked. */
+export type EuTax = "paid" | "due" | "unknown";
+
+export const EU_TAX: { id: EuTax; label: string; short: string }[] = [
+  { id: "paid", label: "Duties & VAT paid", short: "Paid" },
+  { id: "due", label: "Customs due on delivery", short: "Customs due" },
+  { id: "unknown", label: "Not checked yet", short: "Unknown" },
+];
+
+export interface Brand {
+  id: string;
+  name: string;
+  website?: string;
+  euTax: EuTax;
+  createdAt: number;
+}
+
+export interface City {
+  name: string;
+  /** ISO 3166-1 alpha-2 */
+  country: string;
+  lat: number;
+  lon: number;
+}
+
+export interface Boutique {
+  id: string;
+  name: string;
+  website?: string;
+  euTax: EuTax;
+  brandIds: string[];
+  /** Missing for online-only shops, which then sit in the list but not on the globe. */
+  city?: City;
+  address?: string;
+  createdAt: number;
+}

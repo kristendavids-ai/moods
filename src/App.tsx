@@ -1,8 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import type { Filters, Item, PhotoKind } from "./types";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import type { Boutique, Brand, Filters, Item, PhotoKind } from "./types";
 import { STATUSES } from "./types";
-import { deleteItem, listItems, saveItem, type PhotoWrite } from "./db/store";
-import { getCategories, setCategories as persistCategories } from "./lib/settings";
+import {
+  deleteBoutique,
+  deleteBrand,
+  deleteItem,
+  listBoutiques,
+  listBrands,
+  listItems,
+  newId,
+  saveBoutique,
+  saveBrand,
+  saveItem,
+  type PhotoWrite,
+} from "./db/store";
+import {
+  getCategories,
+  getSection,
+  setCategories as persistCategories,
+  setSection as persistSection,
+  type Section,
+} from "./lib/settings";
 import { seasonSortKey } from "./lib/seasons";
 import { revokeUrl } from "./lib/image";
 import { Header, pad3 } from "./components/Header";
@@ -14,13 +32,23 @@ import { FilterSheet } from "./components/FilterSheet";
 import { ItemDetail } from "./components/ItemDetail";
 import { ItemForm } from "./components/ItemForm";
 import { Settings } from "./components/Settings";
+import { Brands } from "./components/Brands";
+import { BrandPage } from "./components/BrandPage";
+import { BrandForm } from "./components/BrandForm";
+import { BoutiqueForm } from "./components/BoutiqueForm";
+
+// The globe, its map data and d3 load only when Boutiques is first opened.
+const Boutiques = lazy(() => import("./components/Boutiques").then((m) => ({ default: m.Boutiques })));
 
 type View =
   | { name: "board" }
   | { name: "item"; id: string }
   | { name: "add" }
   | { name: "edit"; id: string; addKind?: PhotoKind }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "brand"; id: string }
+  | { name: "brandForm"; id?: string }
+  | { name: "boutiqueForm"; id?: string };
 
 export default function App() {
   const [items, setItems] = useState<Item[]>([]);
@@ -31,8 +59,19 @@ export default function App() {
   const [menu, setMenu] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [toastMsg, setToastMsg] = useState<string>();
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [boutiques, setBoutiques] = useState<Boutique[]>([]);
+  const [section, setSectionState] = useState<Section>(getSection);
+  const [bqSelect, setBqSelect] = useState<string>();
 
-  const reload = useCallback(() => listItems().then((all) => (setItems(all), setLoaded(true))), []);
+  const reloadPlaces = useCallback(
+    () => Promise.all([listBrands().then(setBrands), listBoutiques().then(setBoutiques)]),
+    [],
+  );
+  const reload = useCallback(
+    () => Promise.all([listItems().then((all) => (setItems(all), setLoaded(true))), reloadPlaces()]),
+    [reloadPlaces],
+  );
   useEffect(() => {
     reload();
   }, [reload]);
@@ -45,6 +84,20 @@ export default function App() {
   const go = (v: View) => {
     setView(v);
     window.scrollTo({ top: 0 });
+  };
+
+  const switchSection = (s: Section) => {
+    setSectionState(s);
+    persistSection(s);
+    if (s !== "boutiques") setBqSelect(undefined);
+    go({ name: "board" });
+  };
+
+  const createBrand = async (name: string): Promise<Brand> => {
+    const b: Brand = { id: newId(), name, euTax: "unknown", createdAt: Date.now() };
+    await saveBrand(b);
+    await reloadPlaces();
+    return b;
   };
 
   // Categories used by saved items stay visible even if removed from the list.
@@ -118,6 +171,81 @@ export default function App() {
     );
   }
 
+  const brand = view.name === "brand" || view.name === "brandForm" ? brands.find((b) => b.id === view.id) : undefined;
+  const boutique = view.name === "boutiqueForm" ? boutiques.find((b) => b.id === view.id) : undefined;
+
+  if (view.name === "brandForm") {
+    return (
+      <BrandForm
+        key={view.id ?? "new"}
+        editing={brand}
+        onCancel={() => go(brand ? { name: "brand", id: brand.id } : { name: "board" })}
+        onSave={async (b) => {
+          await saveBrand(b);
+          await reloadPlaces();
+          go({ name: "brand", id: b.id });
+          toast(brand ? "Saved" : "Brand added");
+        }}
+      />
+    );
+  }
+
+  if (view.name === "brand" && brand) {
+    return (
+      <>
+        <BrandPage
+          brand={brand}
+          boutiques={boutiques}
+          onBack={() => go({ name: "board" })}
+          onEdit={() => go({ name: "brandForm", id: brand.id })}
+          onTax={async (euTax) => {
+            await saveBrand({ ...brand, euTax });
+            reloadPlaces();
+          }}
+          onDelete={async () => {
+            await deleteBrand(brand.id);
+            await reloadPlaces();
+            go({ name: "board" });
+            toast("Brand removed");
+          }}
+          onOpenBoutique={(b) => {
+            setBqSelect(b.id);
+            setSectionState("boutiques");
+            persistSection("boutiques");
+            go({ name: "board" });
+          }}
+        />
+        {toastMsg && <div className="toast">{toastMsg}</div>}
+      </>
+    );
+  }
+
+  if (view.name === "boutiqueForm") {
+    return (
+      <BoutiqueForm
+        key={view.id ?? "new"}
+        editing={boutique}
+        brands={brands}
+        onCreateBrand={createBrand}
+        onCancel={() => go({ name: "board" })}
+        onSave={async (b) => {
+          await saveBoutique(b);
+          await reloadPlaces();
+          setBqSelect(b.id);
+          go({ name: "board" });
+          toast(boutique ? "Saved" : "Boutique added");
+        }}
+        onDelete={async () => {
+          await deleteBoutique(boutique!.id);
+          await reloadPlaces();
+          setBqSelect(undefined);
+          go({ name: "board" });
+          toast("Boutique removed");
+        }}
+      />
+    );
+  }
+
   if (view.name === "settings") {
     return (
       <>
@@ -131,6 +259,55 @@ export default function App() {
           onChanged={reload}
           toast={toast}
         />
+        {toastMsg && <div className="toast">{toastMsg}</div>}
+      </>
+    );
+  }
+
+  const menuOverlay = menu && (
+    <MenuOverlay
+      section={section}
+      counts={{ board: items.length, brands: brands.length, boutiques: boutiques.length }}
+      onSection={switchSection}
+      categories={allCategories}
+      seasons={seasons}
+      items={items}
+      filters={filters}
+      onFilters={setFilters}
+      onClose={() => setMenu(false)}
+      onSettings={() => go({ name: "settings" })}
+      onAdd={() => go({ name: "add" })}
+      onOpenItem={(i) => go({ name: "item", id: i.id })}
+    />
+  );
+
+  if (section !== "board") {
+    const count = section === "brands" ? brands.length : boutiques.length;
+    return (
+      <>
+        <header className="header">
+          <Header open={menu} count={count} onToggle={() => setMenu(true)} onHome={() => switchSection("board")} />
+        </header>
+        {section === "brands" ? (
+          <Brands
+            brands={brands}
+            boutiques={boutiques}
+            onOpen={(b) => go({ name: "brand", id: b.id })}
+            onAdd={() => go({ name: "brandForm" })}
+          />
+        ) : (
+          <Suspense fallback={<div className="empty"><p className="mute">Loading the globe…</p></div>}>
+            <Boutiques
+              boutiques={boutiques}
+              brands={brands}
+              initial={bqSelect}
+              onAdd={() => go({ name: "boutiqueForm" })}
+              onEdit={(b) => go({ name: "boutiqueForm", id: b.id })}
+              onOpenBrand={(b) => go({ name: "brand", id: b.id })}
+            />
+          </Suspense>
+        )}
+        {menuOverlay}
         {toastMsg && <div className="toast">{toastMsg}</div>}
       </>
     );
@@ -195,19 +372,7 @@ export default function App() {
         </button>
       </div>
 
-      {menu && (
-        <MenuOverlay
-          categories={allCategories}
-          seasons={seasons}
-          items={items}
-          filters={filters}
-          onFilters={setFilters}
-          onClose={() => setMenu(false)}
-          onSettings={() => go({ name: "settings" })}
-          onAdd={() => go({ name: "add" })}
-          onOpenItem={(i) => go({ name: "item", id: i.id })}
-        />
-      )}
+      {menuOverlay}
       {sheet && (
         <FilterSheet seasons={seasons} filters={filters} onFilters={setFilters} onClose={() => setSheet(false)} />
       )}

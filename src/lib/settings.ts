@@ -34,3 +34,11 @@ export function getCategories(): string[] {
   }
 }
 export const setCategories = (c: string[]) => write(KEY_CATS, JSON.stringify(c));
+
+export type Section = "board" | "brands" | "boutiques";
+const KEY_SECTION = "moods.section";
+export const getSection = (): Section => {
+  const s = read(KEY_SECTION);
+  return s === "brands" || s === "boutiques" ? s : "board";
+};
+export const setSection = (s: Section) => write(KEY_SECTION, s);

@@ -46,7 +46,9 @@ export function Settings({ categories, onCategories, onBack, onChanged, toast }:
     try {
       const n = await importBackup(file);
       onChanged();
-      toast(`Imported ${n} pieces`);
+      const count = (k: number, one: string, many: string) => `${k} ${k === 1 ? one : many}`;
+      const extra = [n.brands && count(n.brands, "brand", "brands"), n.boutiques && count(n.boutiques, "boutique", "boutiques")];
+      toast(`Imported ${[count(n.items, "piece", "pieces"), ...extra].filter(Boolean).join(", ")}`);
     } catch {
       toast("That file isn't a MOODS backup");
     }
@@ -156,6 +158,7 @@ export function Settings({ categories, onCategories, onBack, onChanged, toast }:
 
       <section>
         <h2>Danger</h2>
+        <p className="micro">Clears the board, brands and boutiques from this device. Export a backup first.</p>
         <div className="row">
           {confirmClear ? (
             <>
@@ -176,10 +179,16 @@ export function Settings({ categories, onCategories, onBack, onChanged, toast }:
             </>
           ) : (
             <button className="btn ghost" onClick={() => setConfirmClear(true)}>
-              Clear board
+              Clear everything
             </button>
           )}
         </div>
+      </section>
+      <section>
+        <h2>Credits</h2>
+        <p className="micro">
+          City data from GeoNames (geonames.org), CC BY 4.0. Country outlines from Natural Earth via world-atlas.
+        </p>
       </section>
     </div>
   );
