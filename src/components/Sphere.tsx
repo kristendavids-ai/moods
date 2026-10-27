@@ -22,6 +22,14 @@ const MIN_TILES = 48;
 const MAX_TILES = 160;
 const AUTO_SPIN = (7 * Math.PI) / 180; // rad/s
 const CAMERA = 2.4; // camera distance, in sphere radii
+const HIGHLIGHT_EVERY = 2400; // ms, as in the reference
+const HIGHLIGHT_FALLBACK = "#27c93f";
+/** Black or white text, whichever reads better on `hex`. */
+const inkOn = (hex: string) => {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+  return lum > 150 ? "#0a0a0a" : "#ffffff";
+};
 const deg = (r: number) => (((r * 180) / Math.PI) % 360 + 360) % 360;
 
 const shuffle = <T,>(a: T[]) => {
@@ -60,6 +68,9 @@ export function Sphere({ items, season, onOpen }: Props) {
   const tileEls = useRef<(HTMLButtonElement | null)[]>([]);
   const readRotate = useRef<HTMLSpanElement>(null);
   const readZoom = useRef<HTMLSpanElement>(null);
+  const hlEl = useRef<HTMLDivElement>(null);
+  const hlTop = useRef<HTMLSpanElement>(null);
+  const hlBottom = useRef<HTMLSpanElement>(null);
   const key = items.map((i) => `${i.id}:${i.photos.length}`).join("|");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const tiles = useMemo(() => buildTiles(items), [key]);
@@ -97,6 +108,57 @@ export function Sphere({ items, season, onOpen }: Props) {
     let raf = 0;
     let last = performance.now();
     let lastRead = 0;
+    const geo = tiles.map(() => ({ x: 0, y: 0, size: 0, depth: 0 }));
+    const hl = { i: -1, since: 0, lastItem: "" };
+    const PAD = 5;
+
+    // Outline one front tile in its piece's colour, with brand and piece-name tags.
+    const highlight = (i: number, now: number) => {
+      const el = hlEl.current;
+      if (!el) return;
+      hl.i = i;
+      hl.since = now;
+      if (i < 0) {
+        el.style.opacity = "0";
+        return;
+      }
+      const { item } = tiles[i];
+      hl.lastItem = item.id;
+      const colour = item.colour?.hex || HIGHLIGHT_FALLBACK;
+      el.style.setProperty("--hl", colour);
+      el.style.setProperty("--hl-ink", inkOn(colour));
+      el.dataset.item = item.id;
+      el.dataset.tile = String(i);
+      if (hlTop.current) hlTop.current.textContent = item.brand || "Unknown";
+      if (hlBottom.current) hlBottom.current.textContent = item.name || item.category;
+      el.style.transition = "none";
+      el.style.opacity = "0";
+      requestAnimationFrame(() => {
+        el.style.transition = reduced ? "none" : "opacity 120ms ease";
+        el.style.opacity = "1";
+      });
+    };
+
+    const pickHighlight = (now: number) => {
+      const { w, h } = st.size;
+      const inside = (g: (typeof geo)[number]) =>
+        g.x >= 10 + PAD && g.x + g.size <= w - 10 - PAD && g.y >= 22 + PAD + 14 && g.y + g.size * 1.25 <= h - 22 - PAD - 14;
+      // Only tiles you can actually see: near the front, not tiny, and not covered at
+      // their centre by a nearer tile.
+      const minSize = Math.min(w, h) * 0.13 * st.zoom * 0.9;
+      const covered = (i: number) => {
+        const g = geo[i];
+        const cx = g.x + g.size / 2;
+        const cyy = g.y + g.size * 0.625;
+        return geo.some((o, j) => j !== i && o.depth > g.depth && cx > o.x && cx < o.x + o.size && cyy > o.y && cyy < o.y + o.size * 1.25);
+      };
+      const front = geo
+        .map((g, i) => ({ g, i }))
+        .filter(({ g, i }) => g.depth >= 0.78 && g.size >= minSize && inside(g) && !covered(i));
+      const fresh = front.filter(({ i }) => tiles[i].item.id !== hl.lastItem);
+      const pool = fresh.length ? fresh : front;
+      highlight(pool.length ? pool[Math.floor(Math.random() * pool.length)].i : -1, now);
+    };
 
     const frame = (now: number) => {
       raf = requestAnimationFrame(frame);
@@ -137,6 +199,21 @@ export function Sphere({ items, season, onOpen }: Props) {
         el.style.transform = `translate3d(${px.toFixed(1)}px, ${py.toFixed(1)}px, 0) scale(${(size / 100).toFixed(4)})`;
         el.style.opacity = ((0.28 + 0.72 * Math.pow(depth, 1.5)) * assemble).toFixed(3);
         el.style.zIndex = String(Math.round(depth * 1000));
+        geo[i] = { x: px, y: py, size, depth };
+      }
+
+      // Highlight: none while assembling; then a new front tile every few seconds, or
+      // sooner if the current one turns away. It follows its tile every frame.
+      if (t >= 1) {
+        const cur = hl.i >= 0 ? geo[hl.i] : undefined;
+        if (!cur || cur.depth < 0.6 || now - hl.since > HIGHLIGHT_EVERY) pickHighlight(now);
+        const g = hl.i >= 0 ? geo[hl.i] : undefined;
+        if (g && hlEl.current) {
+          const s2 = hlEl.current.style;
+          s2.transform = `translate3d(${(g.x - PAD).toFixed(1)}px, ${(g.y - PAD).toFixed(1)}px, 0)`;
+          s2.width = `${(g.size + PAD * 2).toFixed(1)}px`;
+          s2.height = `${(g.size * 1.25 + PAD * 2).toFixed(1)}px`;
+        }
       }
 
       if (now - lastRead > 100) {
@@ -238,6 +315,10 @@ export function Sphere({ items, season, onOpen }: Props) {
         ))}
       </div>
 
+      <div className="sph-hl" ref={hlEl} aria-hidden>
+        <span className="sph-hl-tag top" ref={hlTop} />
+        <span className="sph-hl-tag bottom" ref={hlBottom} />
+      </div>
       <div className="sph-frame" aria-hidden />
       <span className="sph-read tl">
         rotate~ <span ref={readRotate}>0.0°</span>
