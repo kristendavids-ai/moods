@@ -30,9 +30,9 @@ import { Header, pad3 } from "./components/Header";
 import { Hanger } from "./components/Hanger";
 import { CategoryTabs } from "./components/CategoryTabs";
 import { Collage } from "./components/Collage";
-import { Wheel } from "./components/Wheel";
+import { Sphere } from "./components/Sphere";
 
-/** The board opens on the Index roulette; All is the collage of every piece. */
+/** The board opens on the Index sphere; All is the collage of every piece. */
 const INDEX = "Index";
 import { MenuOverlay } from "./components/MenuOverlay";
 import { FilterSheet } from "./components/FilterSheet";
@@ -404,10 +404,10 @@ export default function App() {
         </div>
       ) : (
         filters.category === INDEX ? (
-          <Wheel
+          <Sphere
             key={`${filters.season}|${filters.status}`}
             items={visible}
-            onCategory={(category) => setFilters({ ...filters, category })}
+            season={filters.season}
             onOpen={(item) => go({ name: "item", id: item.id })}
           />
         ) : (
