@@ -139,6 +139,15 @@ export function Sphere({ items, season, onOpen }: Props) {
       });
     };
 
+    // Is tile i's centre covered by a nearer tile?
+    const covered = (i: number) => {
+      const g = geo[i];
+      const cx = g.x + g.size / 2;
+      const cyy = g.y + g.size * 0.625;
+      return geo.some((o, j) => j !== i && o.depth > g.depth && cx > o.x && cx < o.x + o.size && cyy > o.y && cyy < o.y + o.size * 1.25);
+    };
+    let lastCoverCheck = 0;
+
     const pickHighlight = (now: number) => {
       const { w, h } = st.size;
       const inside = (g: (typeof geo)[number]) =>
@@ -146,12 +155,6 @@ export function Sphere({ items, season, onOpen }: Props) {
       // Only tiles you can actually see: near the front, not tiny, and not covered at
       // their centre by a nearer tile.
       const minSize = Math.min(w, h) * 0.13 * st.zoom * 0.9;
-      const covered = (i: number) => {
-        const g = geo[i];
-        const cx = g.x + g.size / 2;
-        const cyy = g.y + g.size * 0.625;
-        return geo.some((o, j) => j !== i && o.depth > g.depth && cx > o.x && cx < o.x + o.size && cyy > o.y && cyy < o.y + o.size * 1.25);
-      };
       const front = geo
         .map((g, i) => ({ g, i }))
         .filter(({ g, i }) => g.depth >= 0.78 && g.size >= minSize && inside(g) && !covered(i));
@@ -206,7 +209,13 @@ export function Sphere({ items, season, onOpen }: Props) {
       // sooner if the current one turns away. It follows its tile every frame.
       if (t >= 1) {
         const cur = hl.i >= 0 ? geo[hl.i] : undefined;
-        if (!cur || cur.depth < 0.6 || now - hl.since > HIGHLIGHT_EVERY) pickHighlight(now);
+        // Move on when it's time, or early if the tile turns away or a nearer one drifts over it.
+        let hidden = false;
+        if (cur && now - lastCoverCheck > 200) {
+          lastCoverCheck = now;
+          hidden = covered(hl.i);
+        }
+        if (!cur || cur.depth < 0.6 || hidden || now - hl.since > HIGHLIGHT_EVERY) pickHighlight(now);
         const g = hl.i >= 0 ? geo[hl.i] : undefined;
         if (g && hlEl.current) {
           const s2 = hlEl.current.style;

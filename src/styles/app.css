@@ -1907,6 +1907,9 @@ img {
 /* ── Index: a turning sphere of every photo ───────────── */
 .sph {
   position: relative;
+  /* Tiles use z-indexes up to ~1000 for depth; keep them inside the sphere so the menu,
+     sheets and bars still sit on top. */
+  isolation: isolate;
   height: calc(100dvh - var(--stage-top, 80px) - 56px - var(--safe-bottom));
   min-height: 360px;
   overflow: hidden;
