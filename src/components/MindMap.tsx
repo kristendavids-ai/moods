@@ -47,7 +47,9 @@ interface Edge {
 }
 
 const BASE = 120;
-const CELL = 205; // world area per node, px²
+const CELL = 360; // world area per node, px² — generous, so photos sit well apart
+const GAP = 60; // least clear space between photos
+const SPREAD_TRIES = 24;
 const RING = 160; // the outskirts around the pieces, where the symbols sit
 const HUB = 56;
 const SPOKE_INK = "#a9a7a0";
@@ -145,19 +147,22 @@ function layout(items: Item[], aspect: number, viewW: number): { nodes: Node[]; 
     for (const { item, photo } of photos) {
       const w = BASE * rand(0.6, 1.4);
       const h = w * 1.25;
-      let placed = false;
-      for (let t = 0; t < 400 && !placed; t++) {
+      // Of several clear spots, take the one furthest from everything already placed,
+      // so photos spread evenly over the canvas instead of clumping.
+      let best: { x: number; y: number; room: number } | undefined;
+      for (let t = 0, found = 0; t < 400 && found < SPREAD_TRIES; t++) {
         const x = rand(RING + w / 2, W - RING - w / 2);
         const y = rand(RING + h / 2, H - RING - h / 2);
         const clear =
-          nodes.every((o) => Math.abs(o.x - x) > (o.w + w) / 2 + 24 || Math.abs(o.y - y) > (o.h + h) / 2 + 24) &&
+          nodes.every((o) => Math.abs(o.x - x) > (o.w + w) / 2 + GAP || Math.abs(o.y - y) > (o.h + h) / 2 + GAP) &&
           slots.every((sl) => x + w / 2 < sl.x - hw || x - w / 2 > sl.x + hw || y + h / 2 < sl.y - up || y - h / 2 > sl.y + down);
-        if (clear) {
-          nodes.push({ key: `${photo.id}`, item, photo, x, y, w, h });
-          placed = true;
-        }
+        if (!clear) continue;
+        found++;
+        const room = nodes.reduce((m, o) => Math.min(m, Math.hypot(o.x - x, o.y - y) - (o.w + w) / 2), Infinity);
+        if (!best || room > best.room) best = { x, y, room };
       }
-      if (!placed) {
+      if (best) nodes.push({ key: `${photo.id}`, item, photo, x: best.x, y: best.y, w, h });
+      else {
         ok = false;
         break;
       }
@@ -347,7 +352,7 @@ export function MindMap({ items, note, onOpen }: Props) {
     const { w, h } = cam.current.size;
     // Clear of the zoom control and the note, so the symbols out on the ring stay visible.
     const overview = Math.min(1, Math.min((w - 80) / W, (h - 110) / H));
-    return [overview, Math.max(1, overview * 1.6), Math.min(MAX_ZOOM, Math.max(2.2, (w * CLOSE_FILL) / BASE))];
+    return [overview, Math.min(1, overview * 2.1), Math.min(MAX_ZOOM, Math.max(2.2, (w * CLOSE_FILL) / BASE))];
   };
   const minZoom = () => Math.min(0.35, levels()[0]);
 
@@ -419,7 +424,8 @@ export function MindMap({ items, note, onOpen }: Props) {
   useEffect(() => {
     const c = cam.current;
     const n = nodes[Math.floor(Math.random() * nodes.length)];
-    if (n) Object.assign(c, { x: n.x, y: n.y, k: 1, glide: null, vel: [0, 0] });
+    // Mid zoom: a handful of pieces on screen, as the reference opens.
+    if (n) Object.assign(c, { x: n.x, y: n.y, k: levels()[1], glide: null, vel: [0, 0] });
     setFocused(-1);
     setActive(null);
   }, [nodes]);
