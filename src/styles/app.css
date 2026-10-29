@@ -1972,6 +1972,80 @@ img {
   }
 }
 
+/* Spokes from a category's symbol: quieter until the symbol is tapped. */
+.map-lines path.spoke {
+  stroke-opacity: 0.32;
+  stroke-dasharray: 2 5;
+}
+
+/* A traced category: its lines come up, everything else steps back. */
+.map-lines path.on {
+  stroke-opacity: 1;
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
+
+.map-lines path.off {
+  stroke-opacity: 0.08;
+}
+
+.map-lines path,
+.map-node,
+.map-hub {
+  transition: stroke-opacity 0.35s var(--ease), stroke-width 0.35s var(--ease), opacity 0.35s var(--ease);
+}
+
+.map-node.off {
+  opacity: 0.16;
+}
+
+.map-hub {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  transform: translate(-50%, -32px) scale(var(--hub-s, 1));
+  transform-origin: 50% 32px;
+}
+
+.map-hub-mark {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--hair);
+  transition: background 0.25s var(--ease), color 0.25s var(--ease);
+}
+
+.map-hub-label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.map-hub-label sup {
+  margin-left: 2px;
+  font-size: 7.5px;
+  color: var(--mute);
+}
+
+.map-hub.on .map-hub-mark {
+  background: var(--ink);
+  color: var(--paper);
+  box-shadow: none;
+}
+
+.map-hub.off {
+  opacity: 0.35;
+}
+
 .map-node {
   position: absolute;
   overflow: hidden;

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import type { Item, Photo } from "../types";
 import { PhotoView } from "./PhotoView";
+import { CategoryIcon } from "./CategoryIcon";
 
 interface Props {
   items: Item[];
@@ -19,17 +20,35 @@ interface Node {
   h: number;
 }
 
+/** A category's symbol, out on the ring around the pieces. */
+interface Hub {
+  category: string;
+  x: number;
+  y: number;
+  /** Indices of the category's nodes (every photo). */
+  nodes: number[];
+  pieces: number;
+}
+
 interface Edge {
   id: string;
-  a: number;
-  b: number;
+  /** Item ids at each end; a symbol end is `hub:<category>`. */
+  a: string;
+  b: string;
+  p1: [number, number];
+  p2: [number, number];
   d: string;
   from: string;
   to: string;
+  category: string;
+  spoke: boolean;
 }
 
 const BASE = 120;
 const CELL = 300; // world area per node, px²
+const RING = 280; // the outskirts around the pieces, where the symbols sit
+const HUB = 64;
+const SPOKE_INK = "#c9c7c1";
 const CLOSE_FILL = 0.6; // a focused piece fills this share of the width
 const MAX_ZOOM = 3.5;
 const HIGHLIGHT_EVERY = 2400;
@@ -72,6 +91,15 @@ export function pastelOf(item: Item): string {
  * it gets crowded). Category plays no part, so a category's lines cross the map.
  */
 function layout(items: Item[]): { nodes: Node[]; W: number; H: number } {
+  const inner = scatter(items);
+  return {
+    nodes: inner.nodes.map((n) => ({ ...n, x: n.x + RING, y: n.y + RING })),
+    W: inner.W + RING * 2,
+    H: inner.H + RING * 2,
+  };
+}
+
+function scatter(items: Item[]): { nodes: Node[]; W: number; H: number } {
   const photos = shuffle(items.flatMap((item) => item.photos.map((photo) => ({ item, photo }))));
   let side = Math.max(600, Math.sqrt(photos.length) * CELL);
   for (let attempt = 0; attempt < 6; attempt++, side *= 1.12) {
@@ -109,20 +137,70 @@ function layout(items: Item[]): { nodes: Node[]; W: number; H: number } {
   };
 }
 
-function curve(a: Node, b: Node): string {
+function curve(a: { x: number; y: number }, b: { x: number; y: number }, bend = rand(0.1, 0.25)): string {
   const mx = (a.x + b.x) / 2;
   const my = (a.y + b.y) / 2;
   const dx = b.x - a.x;
   const dy = b.y - a.y;
-  const bow = rand(0.1, 0.25) * (Math.random() < 0.5 ? -1 : 1);
+  const bow = bend * (Math.random() < 0.5 ? -1 : 1);
   return `M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${(mx - dy * bow).toFixed(1)},${(my + dx * bow).toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
 }
 
-/** Per category, the shortest tree linking its pieces; plus each piece's two photos. */
-function connect(nodes: Node[]): Edge[] {
+/**
+ * One symbol per category, spaced evenly round the ring. Categories are taken in the
+ * order of where their pieces lie from the centre, so each symbol sits on its pieces' side.
+ */
+function placeHubs(nodes: Node[], W: number, H: number): Hub[] {
+  const cx = W / 2;
+  const cy = H / 2;
+  const groups = new Map<string, number[]>();
+  nodes.forEach((n, i) => groups.set(n.item.category, [...(groups.get(n.item.category) ?? []), i]));
+  const cats = [...groups.entries()].map(([category, idx]) => {
+    const mx = idx.reduce((s, i) => s + nodes[i].x, 0) / idx.length;
+    const my = idx.reduce((s, i) => s + nodes[i].y, 0) / idx.length;
+    return { category, idx, angle: Math.atan2(my - cy, mx - cx) };
+  });
+  cats.sort((a, b) => a.angle - b.angle);
+  const step = (Math.PI * 2) / Math.max(1, cats.length);
+  // Turn the whole ring so the symbols sit as near their pieces' side as they can.
+  const sx = cats.reduce((s, c, i) => s + Math.cos(c.angle - i * step), 0);
+  const sy = cats.reduce((s, c, i) => s + Math.sin(c.angle - i * step), 0);
+  const start = cats.length ? Math.atan2(sy, sx) : 0;
+  const rx = W / 2 - RING * 0.55;
+  const ry = H / 2 - RING * 0.55;
+  return cats.map((c, i) => {
+    const a = start + i * step;
+    // Where a ray from the centre at this angle meets the ring (a rectangle).
+    const t = 1 / Math.max(Math.abs(Math.cos(a)) / rx, Math.abs(Math.sin(a)) / ry);
+    return {
+      category: c.category,
+      x: cx + Math.cos(a) * t,
+      y: cy + Math.sin(a) * t,
+      nodes: c.idx,
+      pieces: new Set(c.idx.map((i) => nodes[i].item.id)).size,
+    };
+  });
+}
+
+/**
+ * Per category, the shortest tree linking its pieces; each piece's two photos; and a
+ * spoke from the category's symbol to every piece in it.
+ */
+function connect(nodes: Node[], hubs: Hub[]): Edge[] {
   const edges: Edge[] = [];
   const add = (a: number, b: number) =>
-    edges.push({ id: `e${edges.length}`, a, b, d: curve(nodes[a], nodes[b]), from: pastelOf(nodes[a].item), to: pastelOf(nodes[b].item) });
+    edges.push({
+      id: `e${edges.length}`,
+      a: nodes[a].item.id,
+      b: nodes[b].item.id,
+      p1: [nodes[a].x, nodes[a].y],
+      p2: [nodes[b].x, nodes[b].y],
+      d: curve(nodes[a], nodes[b]),
+      from: pastelOf(nodes[a].item),
+      to: pastelOf(nodes[b].item),
+      category: nodes[a].item.category,
+      spoke: false,
+    });
 
   const firstOfPiece = new Map<string, number>();
   nodes.forEach((n, i) => {
@@ -151,6 +229,25 @@ function connect(nodes: Node[]): Edge[] {
       inTree.add(best![1]);
     }
   }
+
+  for (const hub of hubs) {
+    for (const i of firstOfPiece.values()) {
+      const n = nodes[i];
+      if (n.item.category !== hub.category) continue;
+      edges.push({
+        id: `e${edges.length}`,
+        a: `hub:${hub.category}`,
+        b: n.item.id,
+        p1: [hub.x, hub.y],
+        p2: [n.x, n.y],
+        d: curve(hub, n, rand(0.04, 0.12)),
+        from: SPOKE_INK,
+        to: pastelOf(n.item),
+        category: hub.category,
+        spoke: true,
+      });
+    }
+  }
   return edges;
 }
 
@@ -164,20 +261,28 @@ export function MindMap({ items, note, onOpen }: Props) {
   const world = useRef<HTMLDivElement>(null);
   const nodeEls = useRef<(HTMLDivElement | null)[]>([]);
   const pathEls = useRef<(SVGPathElement | null)[]>([]);
+  const hubEls = useRef<(HTMLDivElement | null)[]>([]);
   const captionEl = useRef<HTMLDivElement>(null);
   const hlEl = useRef<HTMLDivElement>(null);
   const hlTop = useRef<HTMLSpanElement>(null);
   const hlBottom = useRef<HTMLSpanElement>(null);
   const [focused, setFocused] = useState<number>(-1);
   const [level, setLevel] = useState(1);
+  const [fitted, setFitted] = useState(false);
   const focusedRef = useRef(-1);
   focusedRef.current = focused;
+  // The category whose symbol was tapped: its lines and pieces are picked out.
+  const [active, setActive] = useState<string | null>(null);
+  const activeRef = useRef<string | null>(null);
+  activeRef.current = active;
 
   const key = items.map((i) => `${i.id}:${i.photos.length}`).join("|");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const { nodes, W, H } = useMemo(() => layout(items), [key]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const edges = useMemo(() => connect(nodes), [nodes]);
+  const hubs = useMemo(() => placeHubs(nodes, W, H), [nodes]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const edges = useMemo(() => connect(nodes, hubs), [hubs]);
 
   const cam = useRef({
     x: 0,
@@ -193,7 +298,8 @@ export function MindMap({ items, note, onOpen }: Props) {
 
   const levels = () => {
     const { w, h } = cam.current.size;
-    const overview = Math.min(1, Math.min(w / W, h / H) * 0.94);
+    // Clear of the zoom control and the note, so the symbols out on the ring stay visible.
+    const overview = Math.min(1, Math.min((w - 130) / W, (h - 170) / H));
     return [overview, Math.max(1, overview * 1.6), Math.min(MAX_ZOOM, Math.max(2.2, (w * CLOSE_FILL) / BASE))];
   };
   const minZoom = () => Math.min(0.35, levels()[0]);
@@ -226,6 +332,27 @@ export function MindMap({ items, note, onOpen }: Props) {
 
   const unfocus = () => focusedRef.current >= 0 && setFocused(-1);
 
+  /** Picks out a category (or clears it) and frames its symbol and all its pieces. */
+  const trace = (h: number) => {
+    const hub = hubs[h];
+    if (!hub) return;
+    if (activeRef.current === hub.category) return setActive(null);
+    setActive(hub.category);
+    setFocused(-1);
+    let [x0, y0, x1, y1] = [hub.x - HUB, hub.y - HUB, hub.x + HUB, hub.y + HUB];
+    for (const i of hub.nodes) {
+      const n = nodes[i];
+      x0 = Math.min(x0, n.x - n.w / 2);
+      y0 = Math.min(y0, n.y - n.h / 2);
+      x1 = Math.max(x1, n.x + n.w / 2);
+      y1 = Math.max(y1, n.y + n.h / 2);
+    }
+    const { w, h: sh } = cam.current.size;
+    // Leave room for the zoom control and the note.
+    const k = Math.max(minZoom(), Math.min(1.4, Math.min((w - 90) / (x1 - x0), (sh - 130) / (y1 - y0))));
+    glideTo((x0 + x1) / 2, (y0 + y1) / 2 + 30 / k, k);
+  };
+
   // Fill the screen between the tabs and the bottom bar.
   useLayoutEffect(() => {
     const el = wrap.current!;
@@ -246,6 +373,7 @@ export function MindMap({ items, note, onOpen }: Props) {
     const n = nodes[Math.floor(Math.random() * nodes.length)];
     if (n) Object.assign(c, { x: n.x, y: n.y, k: 1, glide: null, vel: [0, 0] });
     setFocused(-1);
+    setActive(null);
   }, [nodes]);
 
   // Camera, caption and highlight loop.
@@ -255,7 +383,8 @@ export function MindMap({ items, note, onOpen }: Props) {
     let raf = 0;
     let last = performance.now();
     let lastLevel = -1;
-    const hl = { i: -1, since: 0, lastItem: "" };
+    let lastFitted: boolean | undefined;
+    const hl = { i: -1, since: 0, lastItem: "", category: null as string | null };
 
     const toScreen = (n: Node) => {
       const { w, h } = c.size;
@@ -293,8 +422,10 @@ export function MindMap({ items, note, onOpen }: Props) {
       const onScreen = nodes
         .map((n, i) => ({ r: toScreen(n), i }))
         .filter(({ r }) => r.x > 12 && r.y > 22 && r.x + r.w < w - 52 && r.y + r.h < h - 110 && r.w > 46);
-      const fresh = onScreen.filter(({ i }) => nodes[i].item.id !== hl.lastItem);
-      const pool = fresh.length ? fresh : onScreen;
+      const cat = activeRef.current;
+      const inCat = cat ? onScreen.filter(({ i }) => nodes[i].item.category === cat) : onScreen;
+      const fresh = inCat.filter(({ i }) => nodes[i].item.id !== hl.lastItem);
+      const pool = fresh.length ? fresh : inCat;
       showHighlight(pool.length ? pool[Math.floor(Math.random() * pool.length)].i : -1, now);
     };
 
@@ -326,6 +457,8 @@ export function MindMap({ items, note, onOpen }: Props) {
         world.current.style.transform = `translate3d(${(w / 2 - c.x * c.k).toFixed(1)}px, ${(h / 2 - c.y * c.k).toFixed(1)}px, 0) scale(${c.k.toFixed(4)})`;
       }
       wrap.current?.style.setProperty("--k", c.k.toFixed(4));
+      // Symbols never shrink below ~45px on screen, so they stay tappable zoomed right out.
+      wrap.current?.style.setProperty("--hub-s", Math.max(1, 0.7 / c.k).toFixed(3));
 
       // Zoom dashes: nearest of the three levels (on a log scale).
       const lv = levels();
@@ -333,6 +466,12 @@ export function MindMap({ items, note, onOpen }: Props) {
       if (nearest !== lastLevel) {
         lastLevel = nearest;
         setLevel(nearest);
+      }
+      // "−" stays live until the whole map, symbols and all, is in view.
+      const isFitted = c.k <= lv[0] * 1.03;
+      if (isFitted !== lastFitted) {
+        lastFitted = isFitted;
+        setFitted(isFitted);
       }
 
       // Caption follows the focused node.
@@ -348,7 +487,9 @@ export function MindMap({ items, note, onOpen }: Props) {
       } else {
         const cur = hl.i >= 0 ? toScreen(nodes[hl.i]) : undefined;
         const gone = cur && (cur.x + cur.w < 0 || cur.y + cur.h < 0 || cur.x > w || cur.y > h);
-        if (!cur || gone || now - hl.since > HIGHLIGHT_EVERY) pickHighlight(now);
+        const traced = activeRef.current !== hl.category;
+        if (traced) hl.category = activeRef.current;
+        if (!cur || gone || traced || now - hl.since > HIGHLIGHT_EVERY) pickHighlight(now);
         if (hl.i >= 0 && hlEl.current) {
           const r = toScreen(nodes[hl.i]);
           const s = hlEl.current.style;
@@ -368,7 +509,10 @@ export function MindMap({ items, note, onOpen }: Props) {
     if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || !edges.length) return;
     let timer = 0;
     const tick = () => {
-      const free = pathEls.current.filter((p) => p && !p.classList.contains("glow")) as SVGPathElement[];
+      const cat = activeRef.current;
+      const free = pathEls.current.filter(
+        (p) => p && !p.classList.contains("glow") && (!cat || p.dataset.category === cat),
+      ) as SVGPathElement[];
       const p = free[Math.floor(Math.random() * free.length)];
       if (p) {
         p.style.animationDuration = `${rand(1.2, 2.8).toFixed(2)}s`;
@@ -433,14 +577,19 @@ export function MindMap({ items, note, onOpen }: Props) {
     if (performance.now() - d.t > 80) c.vel = [0, 0];
     if (d.moved >= 6) return;
     c.vel = [0, 0];
-    // Nodes ignore pointer events (the stage owns gestures), so hit-test them here.
+    // Nodes and symbols ignore pointer events (the stage owns gestures), so hit-test them here.
+    const hubHit = hubEls.current.findIndex((el) => {
+      const r = el?.querySelector(".map-hub-mark")?.getBoundingClientRect();
+      return r && e.clientX >= r.left - 8 && e.clientX <= r.right + 8 && e.clientY >= r.top - 8 && e.clientY <= r.bottom + 8;
+    });
+    if (hubHit >= 0) return trace(hubHit);
     let hit = -1;
     nodeEls.current.forEach((el, i) => {
       if (!el) return;
       const r = el.getBoundingClientRect();
       if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) hit = i;
     });
-    if (hit < 0) return unfocus();
+    if (hit < 0) return focusedRef.current >= 0 ? unfocus() : setActive(null);
     if (hit === focusedRef.current) onOpen(nodes[hit].item);
     else focusNode(hit);
   };
@@ -487,10 +636,10 @@ export function MindMap({ items, note, onOpen }: Props) {
                   key={e.id}
                   id={`g-${e.id}`}
                   gradientUnits="userSpaceOnUse"
-                  x1={nodes[e.a].x}
-                  y1={nodes[e.a].y}
-                  x2={nodes[e.b].x}
-                  y2={nodes[e.b].y}
+                  x1={e.p1[0]}
+                  y1={e.p1[1]}
+                  x2={e.p2[0]}
+                  y2={e.p2[1]}
                 >
                   <stop offset="0" stopColor={e.from} />
                   <stop offset="1" stopColor={e.to} />
@@ -504,12 +653,14 @@ export function MindMap({ items, note, onOpen }: Props) {
                   pathEls.current[i] = el;
                 }}
                 d={e.d}
+                className={[e.spoke && "spoke", active && (e.category === active ? "on" : "off")].filter(Boolean).join(" ") || undefined}
                 stroke={`url(#g-${e.id})`}
                 data-from={e.from}
                 data-to={e.to}
-                data-a={nodes[e.a].item.id}
-                data-b={nodes[e.b].item.id}
-                style={{ ["--glow" as string]: e.from }}
+                data-a={e.a}
+                data-b={e.b}
+                data-category={e.category}
+                style={{ ["--glow" as string]: e.spoke ? e.to : e.from }}
               />
             ))}
           </svg>
@@ -519,13 +670,35 @@ export function MindMap({ items, note, onOpen }: Props) {
               ref={(el) => {
                 nodeEls.current[i] = el;
               }}
-              className={`map-node${n.photo.kind === "item" && n.photo.mode === "compose" ? " cutout" : ""}${i === focused ? " focused" : ""}`}
+              className={`map-node${n.photo.kind === "item" && n.photo.mode === "compose" ? " cutout" : ""}${i === focused ? " focused" : ""}${active && n.item.category !== active ? " off" : ""}`}
               data-item={n.item.id}
               data-kind={n.photo.kind}
               aria-label={[n.item.brand, n.item.name].filter(Boolean).join(" ") || "Piece"}
               style={{ left: n.x - n.w / 2, top: n.y - n.h / 2, width: n.w, height: n.h, animationDelay: `${Math.min(600, i * 12)}ms` }}
             >
               <PhotoView photo={n.photo} />
+            </div>
+          ))}
+          {hubs.map((hub, i) => (
+            <div
+              key={hub.category}
+              ref={(el) => {
+                hubEls.current[i] = el;
+              }}
+              className={`map-hub${active === hub.category ? " on" : active ? " off" : ""}`}
+              data-category={hub.category}
+              role="button"
+              aria-pressed={active === hub.category}
+              aria-label={`${hub.category}: ${hub.pieces} ${hub.pieces === 1 ? "piece" : "pieces"}`}
+              style={{ left: hub.x, top: hub.y }}
+            >
+              <span className="map-hub-mark">
+                <CategoryIcon category={hub.category} size={HUB * 0.62} />
+              </span>
+              <span className="map-hub-label">
+                {hub.category}
+                <sup>{hub.pieces}</sup>
+              </span>
             </div>
           ))}
         </div>
@@ -554,7 +727,7 @@ export function MindMap({ items, note, onOpen }: Props) {
             <span key={l} className={l === level ? "on" : undefined} />
           ))}
         </div>
-        <button onClick={() => step(-1)} aria-label="Zoom out" disabled={level === 0}>
+        <button onClick={() => step(-1)} aria-label="Zoom out" disabled={level === 0 && fitted}>
           −
         </button>
       </div>
