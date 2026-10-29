@@ -1,0 +1,563 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
+import type { Item, Photo } from "../types";
+import { PhotoView } from "./PhotoView";
+
+interface Props {
+  items: Item[];
+  note: string;
+  onOpen: (item: Item) => void;
+}
+
+interface Node {
+  key: string;
+  item: Item;
+  photo: Photo;
+  /** Centre and size, in world px. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface Edge {
+  id: string;
+  a: number;
+  b: number;
+  d: string;
+  from: string;
+  to: string;
+}
+
+const BASE = 120;
+const CELL = 300; // world area per node, px²
+const CLOSE_FILL = 0.6; // a focused piece fills this share of the width
+const MAX_ZOOM = 3.5;
+const HIGHLIGHT_EVERY = 2400;
+const HIGHLIGHT_FALLBACK = "#27c93f";
+const PASTELS = ["#f5c6d0", "#f4e4a1", "#cfe3c4", "#c6dcf2", "#ddd0f2"];
+
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const shuffle = <T,>(a: T[]) => {
+  const b = [...a];
+  for (let i = b.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [b[i], b[j]] = [b[j], b[i]];
+  }
+  return b;
+};
+
+/** Black or white text, whichever reads better on `hex`. */
+const inkOn = (hex: string) => {
+  const n = parseInt(hex.replace("#", ""), 16);
+  const lum = 0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255);
+  return lum > 150 ? "#0a0a0a" : "#ffffff";
+};
+
+/** The piece's colour mixed 60% towards white; a soft category pastel when it has none. */
+export function pastelOf(item: Item): string {
+  const hex = item.colour?.hex;
+  if (hex && /^#[0-9a-f]{6}$/i.test(hex)) {
+    const n = parseInt(hex.slice(1), 16);
+    const mix = (c: number) => Math.round(c + (255 - c) * 0.6);
+    const [r, g, b] = [mix((n >> 16) & 255), mix((n >> 8) & 255), mix(n & 255)];
+    return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+  }
+  let h = 0;
+  for (const ch of item.category) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return PASTELS[h % PASTELS.length];
+}
+
+/**
+ * Scatters one node per photo with no overlaps (dart throwing, growing the world if
+ * it gets crowded). Category plays no part, so a category's lines cross the map.
+ */
+function layout(items: Item[]): { nodes: Node[]; W: number; H: number } {
+  const photos = shuffle(items.flatMap((item) => item.photos.map((photo) => ({ item, photo }))));
+  let side = Math.max(600, Math.sqrt(photos.length) * CELL);
+  for (let attempt = 0; attempt < 6; attempt++, side *= 1.12) {
+    const nodes: Node[] = [];
+    let ok = true;
+    for (const { item, photo } of photos) {
+      const w = BASE * rand(0.6, 1.4);
+      const h = w * 1.25;
+      let placed = false;
+      for (let t = 0; t < 400 && !placed; t++) {
+        const x = rand(w / 2, side - w / 2);
+        const y = rand(h / 2, side - h / 2);
+        const clear = nodes.every((o) => Math.abs(o.x - x) > (o.w + w) / 2 + 24 || Math.abs(o.y - y) > (o.h + h) / 2 + 24);
+        if (clear) {
+          nodes.push({ key: `${photo.id}`, item, photo, x, y, w, h });
+          placed = true;
+        }
+      }
+      if (!placed) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return { nodes, W: side, H: side };
+  }
+  // Fallback: a loose grid that can't overlap.
+  const cols = Math.ceil(Math.sqrt(photos.length));
+  return {
+    nodes: photos.map(({ item, photo }, i) => {
+      const w = BASE * rand(0.6, 1.1);
+      return { key: photo.id, item, photo, x: (i % cols) * CELL + CELL / 2, y: Math.floor(i / cols) * CELL + CELL / 2, w, h: w * 1.25 };
+    }),
+    W: cols * CELL,
+    H: Math.ceil(photos.length / cols) * CELL,
+  };
+}
+
+function curve(a: Node, b: Node): string {
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const bow = rand(0.1, 0.25) * (Math.random() < 0.5 ? -1 : 1);
+  return `M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${(mx - dy * bow).toFixed(1)},${(my + dx * bow).toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+}
+
+/** Per category, the shortest tree linking its pieces; plus each piece's two photos. */
+function connect(nodes: Node[]): Edge[] {
+  const edges: Edge[] = [];
+  const add = (a: number, b: number) =>
+    edges.push({ id: `e${edges.length}`, a, b, d: curve(nodes[a], nodes[b]), from: pastelOf(nodes[a].item), to: pastelOf(nodes[b].item) });
+
+  const firstOfPiece = new Map<string, number>();
+  nodes.forEach((n, i) => {
+    const first = firstOfPiece.get(n.item.id);
+    if (first === undefined) firstOfPiece.set(n.item.id, i);
+    else add(first, i);
+  });
+
+  const byCategory = new Map<string, number[]>();
+  for (const i of firstOfPiece.values()) {
+    const c = nodes[i].item.category;
+    byCategory.set(c, [...(byCategory.get(c) ?? []), i]);
+  }
+  for (const group of byCategory.values()) {
+    // Prim's algorithm on straight-line distance.
+    const inTree = new Set([group[0]]);
+    while (inTree.size < group.length) {
+      let best: [number, number, number] | undefined;
+      for (const a of inTree)
+        for (const b of group)
+          if (!inTree.has(b)) {
+            const d = Math.hypot(nodes[a].x - nodes[b].x, nodes[a].y - nodes[b].y);
+            if (!best || d < best[2]) best = [a, b, d];
+          }
+      add(best![0], best![1]);
+      inTree.add(best![1]);
+    }
+  }
+  return edges;
+}
+
+/**
+ * The board's Index: a living mind map. Every photo is scattered over a white canvas you
+ * drag and zoom; pastel lines link pieces in the same category and glow now and then; a
+ * roving border picks out a piece at a time; tapping glides to a piece to view it.
+ */
+export function MindMap({ items, note, onOpen }: Props) {
+  const wrap = useRef<HTMLDivElement>(null);
+  const world = useRef<HTMLDivElement>(null);
+  const nodeEls = useRef<(HTMLDivElement | null)[]>([]);
+  const pathEls = useRef<(SVGPathElement | null)[]>([]);
+  const captionEl = useRef<HTMLDivElement>(null);
+  const hlEl = useRef<HTMLDivElement>(null);
+  const hlTop = useRef<HTMLSpanElement>(null);
+  const hlBottom = useRef<HTMLSpanElement>(null);
+  const [focused, setFocused] = useState<number>(-1);
+  const [level, setLevel] = useState(1);
+  const focusedRef = useRef(-1);
+  focusedRef.current = focused;
+
+  const key = items.map((i) => `${i.id}:${i.photos.length}`).join("|");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const { nodes, W, H } = useMemo(() => layout(items), [key]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const edges = useMemo(() => connect(nodes), [nodes]);
+
+  const cam = useRef({
+    x: 0,
+    y: 0,
+    k: 1,
+    vel: [0, 0] as [number, number],
+    size: { w: 0, h: 0 },
+    glide: null as null | { from: [number, number, number]; to: [number, number, number]; start: number },
+    pointers: new Map<number, { x: number; y: number }>(),
+    drag: null as null | { x: number; y: number; t: number; moved: number; pinch?: number; k: number },
+    started: false,
+  });
+
+  const levels = () => {
+    const { w, h } = cam.current.size;
+    const overview = Math.min(1, Math.min(w / W, h / H) * 0.94);
+    return [overview, Math.max(1, overview * 1.6), Math.min(MAX_ZOOM, Math.max(2.2, (w * CLOSE_FILL) / BASE))];
+  };
+  const minZoom = () => Math.min(0.35, levels()[0]);
+
+  const clampPan = () => {
+    const c = cam.current;
+    const m = 120;
+    c.x = Math.max(-m, Math.min(W + m, c.x));
+    c.y = Math.max(-m, Math.min(H + m, c.y));
+  };
+
+  const glideTo = (x: number, y: number, k: number) => {
+    const c = cam.current;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) {
+      Object.assign(c, { x, y, k });
+      return;
+    }
+    c.glide = { from: [c.x, c.y, c.k], to: [x, y, k], start: performance.now() };
+    c.vel = [0, 0];
+  };
+
+  const focusNode = (i: number) => {
+    const n = nodes[i];
+    const { w } = cam.current.size;
+    const k = Math.min(MAX_ZOOM, Math.max(1.5, (w * CLOSE_FILL) / n.w));
+    glideTo(n.x, n.y + n.h * 0.12, k);
+    setFocused(i);
+  };
+
+  const unfocus = () => focusedRef.current >= 0 && setFocused(-1);
+
+  // Fill the screen between the tabs and the bottom bar.
+  useLayoutEffect(() => {
+    const el = wrap.current!;
+    const fit = () => {
+      el.style.setProperty("--stage-top", `${Math.max(0, el.getBoundingClientRect().top + window.scrollY)}px`);
+      cam.current.size = { w: el.clientWidth, h: el.clientHeight };
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    window.addEventListener("resize", fit);
+    return () => (ro.disconnect(), window.removeEventListener("resize", fit));
+  }, []);
+
+  // Open at mid zoom on a random piece, so the screen starts full.
+  useEffect(() => {
+    const c = cam.current;
+    const n = nodes[Math.floor(Math.random() * nodes.length)];
+    if (n) Object.assign(c, { x: n.x, y: n.y, k: 1, glide: null, vel: [0, 0] });
+    setFocused(-1);
+  }, [nodes]);
+
+  // Camera, caption and highlight loop.
+  useEffect(() => {
+    const c = cam.current;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    let raf = 0;
+    let last = performance.now();
+    let lastLevel = -1;
+    const hl = { i: -1, since: 0, lastItem: "" };
+
+    const toScreen = (n: Node) => {
+      const { w, h } = c.size;
+      return { x: w / 2 + (n.x - n.w / 2 - c.x) * c.k, y: h / 2 + (n.y - n.h / 2 - c.y) * c.k, w: n.w * c.k, h: n.h * c.k };
+    };
+
+    const showHighlight = (i: number, now: number) => {
+      const el = hlEl.current;
+      if (!el) return;
+      hl.i = i;
+      hl.since = now;
+      if (i < 0) {
+        el.style.opacity = "0";
+        return;
+      }
+      const { item } = nodes[i];
+      hl.lastItem = item.id;
+      const colour = item.colour?.hex || HIGHLIGHT_FALLBACK;
+      el.style.setProperty("--hl", colour);
+      el.style.setProperty("--hl-ink", inkOn(colour));
+      el.dataset.item = item.id;
+      el.dataset.node = String(i);
+      if (hlTop.current) hlTop.current.textContent = item.brand || "Unknown";
+      if (hlBottom.current) hlBottom.current.textContent = item.name || item.category;
+      el.style.transition = "none";
+      el.style.opacity = "0";
+      requestAnimationFrame(() => {
+        el.style.transition = reduced ? "none" : "opacity 120ms ease";
+        el.style.opacity = "1";
+      });
+    };
+
+    const pickHighlight = (now: number) => {
+      const { w, h } = c.size;
+      const onScreen = nodes
+        .map((n, i) => ({ r: toScreen(n), i }))
+        .filter(({ r }) => r.x > 12 && r.y > 22 && r.x + r.w < w - 52 && r.y + r.h < h - 110 && r.w > 46);
+      const fresh = onScreen.filter(({ i }) => nodes[i].item.id !== hl.lastItem);
+      const pool = fresh.length ? fresh : onScreen;
+      showHighlight(pool.length ? pool[Math.floor(Math.random() * pool.length)].i : -1, now);
+    };
+
+    const frame = (now: number) => {
+      raf = requestAnimationFrame(frame);
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      const { w, h } = c.size;
+      if (!w || !h) return;
+
+      if (c.glide) {
+        const t = Math.min(1, (now - c.glide.start) / 700);
+        const e = 1 - Math.pow(1 - t, 3);
+        const [fx, fy, fk] = c.glide.from;
+        const [tx, ty, tk] = c.glide.to;
+        c.x = fx + (tx - fx) * e;
+        c.y = fy + (ty - fy) * e;
+        c.k = fk * Math.pow(tk / fk, e);
+        if (t >= 1) c.glide = null;
+      } else if (!c.drag && (Math.abs(c.vel[0]) > 1 || Math.abs(c.vel[1]) > 1)) {
+        c.x -= (c.vel[0] * dt) / c.k;
+        c.y -= (c.vel[1] * dt) / c.k;
+        const decay = Math.exp(-dt * 4);
+        c.vel = [c.vel[0] * decay, c.vel[1] * decay];
+        clampPan();
+      }
+
+      if (world.current) {
+        world.current.style.transform = `translate3d(${(w / 2 - c.x * c.k).toFixed(1)}px, ${(h / 2 - c.y * c.k).toFixed(1)}px, 0) scale(${c.k.toFixed(4)})`;
+      }
+      wrap.current?.style.setProperty("--k", c.k.toFixed(4));
+
+      // Zoom dashes: nearest of the three levels (on a log scale).
+      const lv = levels();
+      const nearest = lv.reduce((best, v, i) => (Math.abs(Math.log(c.k / v)) < Math.abs(Math.log(c.k / lv[best])) ? i : best), 0);
+      if (nearest !== lastLevel) {
+        lastLevel = nearest;
+        setLevel(nearest);
+      }
+
+      // Caption follows the focused node.
+      const f = focusedRef.current;
+      if (captionEl.current && f >= 0 && nodes[f]) {
+        const r = toScreen(nodes[f]);
+        captionEl.current.style.transform = `translate3d(${(r.x + r.w / 2).toFixed(1)}px, ${(r.y + r.h + 10).toFixed(1)}px, 0) translateX(-50%)`;
+      }
+
+      // Highlight: hidden while a piece is focused; otherwise a new on-screen node every few seconds.
+      if (f >= 0) {
+        if (hl.i >= 0) showHighlight(-1, now);
+      } else {
+        const cur = hl.i >= 0 ? toScreen(nodes[hl.i]) : undefined;
+        const gone = cur && (cur.x + cur.w < 0 || cur.y + cur.h < 0 || cur.x > w || cur.y > h);
+        if (!cur || gone || now - hl.since > HIGHLIGHT_EVERY) pickHighlight(now);
+        if (hl.i >= 0 && hlEl.current) {
+          const r = toScreen(nodes[hl.i]);
+          const s = hlEl.current.style;
+          s.transform = `translate3d(${(r.x - 5).toFixed(1)}px, ${(r.y - 5).toFixed(1)}px, 0)`;
+          s.width = `${(r.w + 10).toFixed(1)}px`;
+          s.height = `${(r.h + 10).toFixed(1)}px`;
+        }
+      }
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes]);
+
+  // Lines glow now and then, at irregular moments; several can glow at once.
+  useEffect(() => {
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches || !edges.length) return;
+    let timer = 0;
+    const tick = () => {
+      const free = pathEls.current.filter((p) => p && !p.classList.contains("glow")) as SVGPathElement[];
+      const p = free[Math.floor(Math.random() * free.length)];
+      if (p) {
+        p.style.animationDuration = `${rand(1.2, 2.8).toFixed(2)}s`;
+        p.classList.add("glow");
+        p.addEventListener("animationend", () => p.classList.remove("glow"), { once: true });
+      }
+      timer = window.setTimeout(tick, rand(250, 1600));
+    };
+    timer = window.setTimeout(tick, rand(250, 900));
+    return () => window.clearTimeout(timer);
+  }, [edges]);
+
+  // Gestures: drag to pan (with momentum), pinch or wheel to zoom, tap to focus/open.
+  const down = (e: RPointerEvent<HTMLDivElement>) => {
+    const c = cam.current;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    c.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pts = [...c.pointers.values()];
+    c.vel = [0, 0];
+    c.glide = null;
+    c.drag = {
+      x: e.clientX,
+      y: e.clientY,
+      t: performance.now(),
+      moved: c.drag?.moved ?? 0,
+      k: c.k,
+      pinch: pts.length === 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : undefined,
+    };
+  };
+
+  const move = (e: RPointerEvent<HTMLDivElement>) => {
+    const c = cam.current;
+    if (!c.drag || !c.pointers.has(e.pointerId)) return;
+    c.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const pts = [...c.pointers.values()];
+    if (pts.length === 2 && c.drag.pinch) {
+      const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+      c.k = Math.max(minZoom(), Math.min(MAX_ZOOM, (c.drag.k * dist) / c.drag.pinch));
+      c.drag.moved += 10;
+      unfocus();
+      return;
+    }
+    const now = performance.now();
+    const dx = e.clientX - c.drag.x;
+    const dy = e.clientY - c.drag.y;
+    c.x -= dx / c.k;
+    c.y -= dy / c.k;
+    clampPan();
+    const dt = Math.max(0.008, (now - c.drag.t) / 1000);
+    c.vel = [dx / dt, dy / dt];
+    c.drag = { ...c.drag, x: e.clientX, y: e.clientY, t: now, moved: c.drag.moved + Math.abs(dx) + Math.abs(dy) };
+    if (c.drag.moved > 6) unfocus();
+  };
+
+  const up = (e: RPointerEvent<HTMLDivElement>) => {
+    const c = cam.current;
+    c.pointers.delete(e.pointerId);
+    if (c.pointers.size) return;
+    const d = c.drag;
+    c.drag = null;
+    if (!d) return;
+    if (performance.now() - d.t > 80) c.vel = [0, 0];
+    if (d.moved >= 6) return;
+    c.vel = [0, 0];
+    // Nodes ignore pointer events (the stage owns gestures), so hit-test them here.
+    let hit = -1;
+    nodeEls.current.forEach((el, i) => {
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) hit = i;
+    });
+    if (hit < 0) return unfocus();
+    if (hit === focusedRef.current) onOpen(nodes[hit].item);
+    else focusNode(hit);
+  };
+
+  const step = (dir: 1 | -1) => {
+    const c = cam.current;
+    const lv = levels();
+    const next = Math.max(0, Math.min(2, level + dir));
+    if (dir < 0) unfocus();
+    if (next === 2 && dir > 0) {
+      // Zooming to close: focus the node nearest the centre of the screen.
+      let best = 0;
+      nodes.forEach((n, i) => {
+        if (Math.hypot(n.x - c.x, n.y - c.y) < Math.hypot(nodes[best].x - c.x, nodes[best].y - c.y)) best = i;
+      });
+      if (nodes[best]) return focusNode(best);
+    }
+    if (next === 0) glideTo(W / 2, H / 2, lv[0]);
+    else glideTo(c.x, c.y, lv[next]);
+  };
+
+  const fItem = focused >= 0 ? nodes[focused]?.item : undefined;
+
+  return (
+    <section className="map" ref={wrap} aria-label="Index: a map of your pieces">
+      <div
+        className="map-stage"
+        onPointerDown={down}
+        onPointerMove={move}
+        onPointerUp={up}
+        onPointerCancel={up}
+        onWheel={(e) => {
+          const c = cam.current;
+          c.glide = null;
+          c.k = Math.max(minZoom(), Math.min(MAX_ZOOM, c.k * Math.exp(-e.deltaY * 0.0015)));
+          if (e.deltaY > 0) unfocus();
+        }}
+      >
+        <div className="map-world" ref={world} style={{ width: W, height: H }}>
+          <svg className="map-lines" width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden>
+            <defs>
+              {edges.map((e) => (
+                <linearGradient
+                  key={e.id}
+                  id={`g-${e.id}`}
+                  gradientUnits="userSpaceOnUse"
+                  x1={nodes[e.a].x}
+                  y1={nodes[e.a].y}
+                  x2={nodes[e.b].x}
+                  y2={nodes[e.b].y}
+                >
+                  <stop offset="0" stopColor={e.from} />
+                  <stop offset="1" stopColor={e.to} />
+                </linearGradient>
+              ))}
+            </defs>
+            {edges.map((e, i) => (
+              <path
+                key={e.id}
+                ref={(el) => {
+                  pathEls.current[i] = el;
+                }}
+                d={e.d}
+                stroke={`url(#g-${e.id})`}
+                data-from={e.from}
+                data-to={e.to}
+                data-a={nodes[e.a].item.id}
+                data-b={nodes[e.b].item.id}
+                style={{ ["--glow" as string]: e.from }}
+              />
+            ))}
+          </svg>
+          {nodes.map((n, i) => (
+            <div
+              key={n.key}
+              ref={(el) => {
+                nodeEls.current[i] = el;
+              }}
+              className={`map-node${n.photo.kind === "item" && n.photo.mode === "compose" ? " cutout" : ""}${i === focused ? " focused" : ""}`}
+              data-item={n.item.id}
+              data-kind={n.photo.kind}
+              aria-label={[n.item.brand, n.item.name].filter(Boolean).join(" ") || "Piece"}
+              style={{ left: n.x - n.w / 2, top: n.y - n.h / 2, width: n.w, height: n.h, animationDelay: `${Math.min(600, i * 12)}ms` }}
+            >
+              <PhotoView photo={n.photo} />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="map-hl" ref={hlEl} aria-hidden>
+        <span className="map-hl-tag top" ref={hlTop} />
+        <span className="map-hl-tag bottom" ref={hlBottom} />
+      </div>
+
+      {fItem && (
+        <div className="map-caption" ref={captionEl}>
+          <span>{[fItem.brand, fItem.name].filter(Boolean).join(" — ") || "Piece"}</span>
+          <button onClick={() => onOpen(fItem)}>View piece →</button>
+        </div>
+      )}
+
+      {note.trim() && <p className="map-note">{note}</p>}
+
+      <div className="map-zoom" role="group" aria-label="Zoom">
+        <button onClick={() => step(1)} aria-label="Zoom in" disabled={level === 2}>
+          +
+        </button>
+        <div className="map-levels" aria-label={`Zoom level ${level + 1} of 3`}>
+          {[2, 1, 0].map((l) => (
+            <span key={l} className={l === level ? "on" : undefined} />
+          ))}
+        </div>
+        <button onClick={() => step(-1)} aria-label="Zoom out" disabled={level === 0}>
+          −
+        </button>
+      </div>
+    </section>
+  );
+}

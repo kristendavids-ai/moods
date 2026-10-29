@@ -9,9 +9,11 @@ interface Props {
   onBack: () => void;
   onChanged: () => void;
   toast: (msg: string) => void;
+  note: string;
+  onNote: (n: string) => void;
 }
 
-export function Settings({ categories, onCategories, onBack, onChanged, toast }: Props) {
+export function Settings({ categories, onCategories, onBack, onChanged, toast, note, onNote }: Props) {
   const [key, setKey] = useState(getApiKey());
   const [newCat, setNewCat] = useState("");
   const [confirmClear, setConfirmClear] = useState(false);
@@ -62,6 +64,19 @@ export function Settings({ categories, onCategories, onBack, onChanged, toast }:
         </button>
       </div>
       <h1>Settings</h1>
+
+      <section>
+        <h2>Index note</h2>
+        <textarea
+          className="input note-input"
+          rows={3}
+          value={note}
+          aria-label="Index note"
+          placeholder="A line or two about your board. Leave empty to hide it."
+          onChange={(e) => onNote(e.target.value)}
+        />
+        <p className="micro">Shown at the bottom left of the Index map.</p>
+      </section>
 
       <section>
         <h2>Brand scan</h2>

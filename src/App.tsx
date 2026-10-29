@@ -18,8 +18,10 @@ import { brandKey, findBrand } from "./lib/places";
 import {
   brandsSynced,
   getCategories,
+  getIndexNote,
   markBrandsSynced,
   getSection,
+  setIndexNote,
   setCategories as persistCategories,
   setSection as persistSection,
   type Section,
@@ -30,9 +32,9 @@ import { Header, pad3 } from "./components/Header";
 import { Hanger } from "./components/Hanger";
 import { CategoryTabs } from "./components/CategoryTabs";
 import { Collage } from "./components/Collage";
-import { Sphere } from "./components/Sphere";
+import { MindMap } from "./components/MindMap";
 
-/** The board opens on the Index sphere; All is the collage of every piece. */
+/** The board opens on the Index map; All is the collage of every piece. */
 const INDEX = "Index";
 import { MenuOverlay } from "./components/MenuOverlay";
 import { FilterSheet } from "./components/FilterSheet";
@@ -69,6 +71,7 @@ export default function App() {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [boutiques, setBoutiques] = useState<Boutique[]>([]);
   const [section, setSectionState] = useState<Section>(getSection);
+  const [indexNote, setIndexNoteState] = useState(getIndexNote);
   const [bqSelect, setBqSelect] = useState<string>();
 
   const reloadPlaces = useCallback(
@@ -307,6 +310,11 @@ export default function App() {
           onBack={() => go({ name: "board" })}
           onChanged={reload}
           toast={toast}
+          note={indexNote}
+          onNote={(n) => {
+            setIndexNoteState(n);
+            setIndexNote(n);
+          }}
         />
         {toastMsg && <div className="toast">{toastMsg}</div>}
       </>
@@ -404,10 +412,10 @@ export default function App() {
         </div>
       ) : (
         filters.category === INDEX ? (
-          <Sphere
+          <MindMap
             key={`${filters.season}|${filters.status}`}
             items={visible}
-            season={filters.season}
+            note={indexNote}
             onOpen={(item) => go({ name: "item", id: item.id })}
           />
         ) : (

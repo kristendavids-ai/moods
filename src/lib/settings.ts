@@ -47,3 +47,10 @@ export const setSection = (s: Section) => write(KEY_SECTION, s);
 const KEY_BRANDS_SYNCED = "moods.brandsFromBoard";
 export const brandsSynced = () => read(KEY_BRANDS_SYNCED) === "1";
 export const markBrandsSynced = () => write(KEY_BRANDS_SYNCED, "1");
+
+const KEY_NOTE = "moods.indexNote";
+export const DEFAULT_INDEX_NOTE =
+  "A living map of everything I'm looking at — pieces, looks and the brands behind them, linked by category.";
+/** The paragraph on the Index map; an empty string hides it. */
+export const getIndexNote = () => read(KEY_NOTE) ?? DEFAULT_INDEX_NOTE;
+export const setIndexNote = (n: string) => write(KEY_NOTE, n);
