@@ -349,8 +349,9 @@ export function MindMap({ items, note, onOpen }: Props) {
     }
     const { w, h: sh } = cam.current.size;
     // Leave room for the zoom control and the note.
-    const k = Math.max(minZoom(), Math.min(1.4, Math.min((w - 90) / (x1 - x0), (sh - 130) / (y1 - y0))));
-    glideTo((x0 + x1) / 2, (y0 + y1) / 2 + 30 / k, k);
+    const k = Math.max(minZoom(), Math.min(1.4, Math.min((w - 150) / (x1 - x0), (sh - 130) / (y1 - y0))));
+    // Shifted left of centre, clear of the zoom control on the right.
+    glideTo((x0 + x1) / 2 + 30 / k, (y0 + y1) / 2 + 30 / k, k);
   };
 
   // Fill the screen between the tabs and the bottom bar.
@@ -693,7 +694,7 @@ export function MindMap({ items, note, onOpen }: Props) {
               style={{ left: hub.x, top: hub.y }}
             >
               <span className="map-hub-mark">
-                <CategoryIcon category={hub.category} size={HUB * 0.62} />
+                <CategoryIcon category={hub.category} size={HUB} />
               </span>
               <span className="map-hub-label">
                 {hub.category}

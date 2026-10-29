@@ -2014,13 +2014,19 @@ img {
 .map-hub-mark {
   width: 64px;
   height: 64px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--paper);
+  display: block;
   color: var(--ink);
-  box-shadow: inset 0 0 0 1px var(--hair);
-  transition: background 0.25s var(--ease), color 0.25s var(--ease);
+  transition: color 0.25s var(--ease);
+}
+
+.map-hub-mark svg {
+  display: block;
+}
+
+/* The symbol's own circle is the mark; filled with paper so spokes stop at its edge. */
+.map-hub-mark .cat-ring {
+  fill: var(--paper);
+  transition: fill 0.25s var(--ease);
 }
 
 .map-hub-label {
@@ -2037,9 +2043,11 @@ img {
 }
 
 .map-hub.on .map-hub-mark {
-  background: var(--ink);
   color: var(--paper);
-  box-shadow: none;
+}
+
+.map-hub.on .map-hub-mark .cat-ring {
+  fill: var(--ink);
 }
 
 .map-hub.off {
