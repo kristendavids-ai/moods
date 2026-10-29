@@ -1933,7 +1933,7 @@ img {
   left: 0;
   top: 0;
   transform-origin: 0 0;
-  will-change: transform;
+  /* will-change is set by the camera loop: on while moving, off at rest so it repaints sharp. */
   /* The layer is its own blending group, so it needs the paper for cut-outs to multiply into. */
   background: var(--paper);
   box-shadow: 0 0 0 100vmax var(--paper);

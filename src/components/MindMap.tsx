@@ -60,6 +60,7 @@ const HIGHLIGHT_EVERY = 6500; // how long the roving border rests on a piece
 const HIGHLIGHT_FADE = 600;
 const CALM_START = 2600; // no border or glow until the map has settled in
 const GLIDE_MS = 1150;
+const SETTLE_MS = 150; // still this long and the map repaints sharp at its zoom
 const HIGHLIGHT_FALLBACK = "#27c93f";
 const PASTELS = ["#f5c6d0", "#f4e4a1", "#cfe3c4", "#c6dcf2", "#ddd0f2"];
 const DEEPS = ["#e0889e", "#d4b13a", "#86b373", "#74a2d6", "#a48ed6"];
@@ -448,6 +449,7 @@ export function MindMap({ items, note, onOpen }: Props) {
     let last = performance.now();
     let lastLevel = -1;
     let lastFitted: boolean | undefined;
+    let [lastPose, lastK, lastMove, settled] = ["", "", 0, false];
     const hl = { i: -1, since: 0, lastItem: "", category: null as string | null, next: -1, swapAt: 0 };
     const calmUntil = performance.now() + CALM_START;
 
@@ -533,8 +535,20 @@ export function MindMap({ items, note, onOpen }: Props) {
         clampPan();
       }
 
-      if (world.current) {
-        world.current.style.transform = `translate3d(${(w / 2 - c.x * c.k).toFixed(1)}px, ${(h / 2 - c.y * c.k).toFixed(1)}px, 0) scale(${c.k.toFixed(4)})`;
+      // While the camera moves, the map is one composited layer, so motion stays smooth.
+      // Once it rests, the layer is released so the browser repaints it at the current
+      // zoom; otherwise it keeps enlarging the bitmap it first painted, and a close-up blurs.
+      const pose = `${(w / 2 - c.x * c.k).toFixed(1)}px, ${(h / 2 - c.y * c.k).toFixed(1)}px`;
+      const k = c.k.toFixed(4);
+      if (c.glide || c.pointers.size || pose !== lastPose || k !== lastK) lastMove = now;
+      lastPose = pose;
+      lastK = k;
+      const moving = now - lastMove < SETTLE_MS;
+      if (world.current && (moving || !settled)) {
+        const s = world.current.style;
+        s.willChange = moving ? "transform" : "auto";
+        s.transform = moving ? `translate3d(${pose}, 0) scale(${k})` : `translate(${pose}) scale(${k})`;
+        settled = !moving;
       }
       wrap.current?.style.setProperty("--k", c.k.toFixed(4));
       // Symbols never shrink below ~36px on screen, so they stay tappable zoomed right out.
