@@ -1947,46 +1947,75 @@ img {
 
 .map-lines path {
   fill: none;
-  stroke-width: 1.2;
-  stroke-opacity: 0.55;
+  stroke-width: 1.5;
+  stroke-opacity: 0.9;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
 
-/* Sporadic glow: duration is set per line, at random. */
+/* Sporadic glow: the line itself brightens, and a halo and core in the piece's full
+   colour flare over it (separate paths, as iOS ignores CSS filters on SVG). */
 .map-lines path.glow {
   animation: map-glow 2s ease-in-out;
 }
 
 @keyframes map-glow {
-  0%,
-  100% {
-    stroke-opacity: 0.55;
-    stroke-width: 1.2;
-    filter: none;
-  }
   40% {
     stroke-opacity: 1;
-    stroke-width: 2.4;
-    filter: drop-shadow(0 0 4px var(--glow)) drop-shadow(0 0 10px var(--glow));
   }
 }
 
-/* Spokes from a category's symbol: quieter until the symbol is tapped. */
+.map-glow {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.map-glow path {
+  fill: none;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+  opacity: 0;
+  animation: map-flare 2s ease-in-out;
+}
+
+.map-glow path.halo {
+  stroke-width: 9;
+  animation-name: map-halo;
+}
+
+.map-glow path.flare {
+  stroke-width: 2.4;
+}
+
+@keyframes map-flare {
+  40% {
+    opacity: 1;
+  }
+}
+
+@keyframes map-halo {
+  40% {
+    opacity: 0.25;
+  }
+}
+
 .map-lines path.spoke {
-  stroke-opacity: 0.32;
-  stroke-dasharray: 2 5;
+  stroke-opacity: 0.75;
+  stroke-width: 1;
 }
 
 /* A traced category: its lines come up, everything else steps back. */
 .map-lines path.on {
+  stroke: var(--strong);
   stroke-opacity: 1;
   stroke-width: 2;
   stroke-dasharray: none;
 }
 
 .map-lines path.off {
-  stroke-opacity: 0.08;
+  stroke-opacity: 0.1;
 }
 
 .map-lines path,
@@ -2005,15 +2034,15 @@ img {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   pointer-events: none;
-  transform: translate(-50%, -32px) scale(var(--hub-s, 1));
-  transform-origin: 50% 32px;
+  transform: translate(-50%, -28px) scale(var(--hub-s, 1));
+  transform-origin: 50% 28px;
 }
 
 .map-hub-mark {
-  width: 64px;
-  height: 64px;
+  width: 56px;
+  height: 56px;
   display: block;
   color: var(--ink);
   transition: color 0.25s var(--ease);
@@ -2029,8 +2058,9 @@ img {
   transition: fill 0.25s var(--ease);
 }
 
+/* World px: ~9.5px on screen when zoomed out, growing as you zoom in. */
 .map-hub-label {
-  font-size: 10px;
+  font-size: 15px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -2038,7 +2068,7 @@ img {
 
 .map-hub-label sup {
   margin-left: 2px;
-  font-size: 7.5px;
+  font-size: 10px;
   color: var(--mute);
 }
 

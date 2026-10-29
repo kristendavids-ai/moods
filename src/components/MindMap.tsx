@@ -40,20 +40,23 @@ interface Edge {
   d: string;
   from: string;
   to: string;
+  /** Full-strength colour for glows and traced lines (the far end's piece). */
+  strong: string;
   category: string;
   spoke: boolean;
 }
 
 const BASE = 120;
-const CELL = 300; // world area per node, px²
-const RING = 280; // the outskirts around the pieces, where the symbols sit
-const HUB = 64;
-const SPOKE_INK = "#c9c7c1";
+const CELL = 205; // world area per node, px²
+const RING = 160; // the outskirts around the pieces, where the symbols sit
+const HUB = 56;
+const SPOKE_INK = "#a9a7a0";
 const CLOSE_FILL = 0.6; // a focused piece fills this share of the width
 const MAX_ZOOM = 3.5;
 const HIGHLIGHT_EVERY = 2400;
 const HIGHLIGHT_FALLBACK = "#27c93f";
 const PASTELS = ["#f5c6d0", "#f4e4a1", "#cfe3c4", "#c6dcf2", "#ddd0f2"];
+const DEEPS = ["#e0889e", "#d4b13a", "#86b373", "#74a2d6", "#a48ed6"];
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 const shuffle = <T,>(a: T[]) => {
@@ -72,37 +75,71 @@ const inkOn = (hex: string) => {
   return lum > 150 ? "#0a0a0a" : "#ffffff";
 };
 
-/** The piece's colour mixed 60% towards white; a soft category pastel when it has none. */
+/** The piece's colour mixed 35% towards white; a soft category pastel when it has none. */
 export function pastelOf(item: Item): string {
   const hex = item.colour?.hex;
   if (hex && /^#[0-9a-f]{6}$/i.test(hex)) {
     const n = parseInt(hex.slice(1), 16);
-    const mix = (c: number) => Math.round(c + (255 - c) * 0.6);
+    const mix = (c: number) => Math.round(c + (255 - c) * 0.35);
     const [r, g, b] = [mix((n >> 16) & 255), mix((n >> 8) & 255), mix(n & 255)];
     return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
   }
+  return PASTELS[categoryHash(item.category) % PASTELS.length];
+}
+
+function categoryHash(category: string) {
   let h = 0;
-  for (const ch of item.category) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  return PASTELS[h % PASTELS.length];
+  for (const ch of category) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h;
+}
+
+/** The piece's own colour at full strength (darkened if too pale to see on paper). */
+export function strongOf(item: Item): string {
+  const hex = item.colour?.hex;
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return DEEPS[categoryHash(item.category) % DEEPS.length];
+  const n = parseInt(hex.slice(1), 16);
+  let [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+  if (lum > 190) [r, g, b] = [r, g, b].map((c) => Math.round(c * (150 / lum)));
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+}
+
+/** Where a ray from the centre at angle `a` meets the symbols' ring (a rectangle). */
+function onRing(a: number, W: number, H: number) {
+  const rx = W / 2 - RING * 0.5;
+  const ry = H / 2 - RING * 0.5;
+  const t = 1 / Math.max(Math.abs(Math.cos(a)) / rx, Math.abs(Math.sin(a)) / ry);
+  return { x: W / 2 + Math.cos(a) * t, y: H / 2 + Math.sin(a) * t };
 }
 
 /**
- * Scatters one node per photo with no overlaps (dart throwing, growing the world if
- * it gets crowded). Category plays no part, so a category's lines cross the map.
+ * Scatters one node per photo with no overlaps (dart throwing, growing the world if it
+ * gets crowded). Category plays no part, so a category's lines cross the map.
+ *
+ * The symbols' slots are spaced evenly round the ring first, and photos keep clear of
+ * the room each symbol takes at overview zoom (symbols stay a fixed size on screen, so
+ * the more zoomed out, the more of the map they cover). Each category then takes the
+ * slot nearest its pieces' side.
+ *
+ * `aspect` is the height ÷ width the whole map should have, and `viewW` the screen
+ * width, so the map's shape and the symbols' room follow the screen.
  */
-function layout(items: Item[]): { nodes: Node[]; W: number; H: number } {
-  const inner = scatter(items);
-  return {
-    nodes: inner.nodes.map((n) => ({ ...n, x: n.x + RING, y: n.y + RING })),
-    W: inner.W + RING * 2,
-    H: inner.H + RING * 2,
-  };
-}
-
-function scatter(items: Item[]): { nodes: Node[]; W: number; H: number } {
+function layout(items: Item[], aspect: number, viewW: number): { nodes: Node[]; W: number; H: number; hubs: Hub[] } {
   const photos = shuffle(items.flatMap((item) => item.photos.map((photo) => ({ item, photo }))));
-  let side = Math.max(600, Math.sqrt(photos.length) * CELL);
-  for (let attempt = 0; attempt < 6; attempt++, side *= 1.12) {
+  const categories = [...new Set(items.map((i) => i.category))];
+  // Inner width w with (h + 2R) / (w + 2R) = aspect and w·h = the area the photos need.
+  const area = Math.max(1, photos.length) * CELL * CELL;
+  const b = 2 * RING * (aspect - 1);
+  let side = Math.max(360, (-b + Math.sqrt(b * b + 4 * aspect * area)) / (2 * aspect));
+  const tall = (w: number) => Math.max(360, aspect * (w + 2 * RING) - 2 * RING);
+
+  for (let attempt = 0; attempt < 10; attempt++, side *= 1.1) {
+    const W = side + RING * 2;
+    const H = tall(side) + RING * 2;
+    const slots = ringSlots(categories.length, W, H);
+    // A symbol's room on screen at overview (circle above, label below), in world px.
+    const k = Math.min(1, (viewW - 80) / W);
+    const [hw, up, down] = [44 / k, 24 / k, 42 / k];
     const nodes: Node[] = [];
     let ok = true;
     for (const { item, photo } of photos) {
@@ -110,9 +147,11 @@ function scatter(items: Item[]): { nodes: Node[]; W: number; H: number } {
       const h = w * 1.25;
       let placed = false;
       for (let t = 0; t < 400 && !placed; t++) {
-        const x = rand(w / 2, side - w / 2);
-        const y = rand(h / 2, side - h / 2);
-        const clear = nodes.every((o) => Math.abs(o.x - x) > (o.w + w) / 2 + 24 || Math.abs(o.y - y) > (o.h + h) / 2 + 24);
+        const x = rand(RING + w / 2, W - RING - w / 2);
+        const y = rand(RING + h / 2, H - RING - h / 2);
+        const clear =
+          nodes.every((o) => Math.abs(o.x - x) > (o.w + w) / 2 + 24 || Math.abs(o.y - y) > (o.h + h) / 2 + 24) &&
+          slots.every((sl) => x + w / 2 < sl.x - hw || x - w / 2 > sl.x + hw || y + h / 2 < sl.y - up || y - h / 2 > sl.y + down);
         if (clear) {
           nodes.push({ key: `${photo.id}`, item, photo, x, y, w, h });
           placed = true;
@@ -123,18 +162,56 @@ function scatter(items: Item[]): { nodes: Node[]; W: number; H: number } {
         break;
       }
     }
-    if (ok) return { nodes, W: side, H: side };
+    if (ok) return { nodes, W, H, hubs: assignHubs(nodes, slots, W, H) };
   }
-  // Fallback: a loose grid that can't overlap.
+
+  // Fallback: a loose grid that can't overlap, ring round it.
   const cols = Math.ceil(Math.sqrt(photos.length));
-  return {
-    nodes: photos.map(({ item, photo }, i) => {
-      const w = BASE * rand(0.6, 1.1);
-      return { key: photo.id, item, photo, x: (i % cols) * CELL + CELL / 2, y: Math.floor(i / cols) * CELL + CELL / 2, w, h: w * 1.25 };
-    }),
-    W: cols * CELL,
-    H: Math.ceil(photos.length / cols) * CELL,
-  };
+  const W = cols * CELL + RING * 2;
+  const H = Math.ceil(photos.length / cols) * CELL + RING * 2;
+  const nodes = photos.map(({ item, photo }, i) => {
+    const w = BASE * rand(0.6, 1.1);
+    return { key: photo.id, item, photo, x: RING + (i % cols) * CELL + CELL / 2, y: RING + Math.floor(i / cols) * CELL + CELL / 2, w, h: w * 1.25 };
+  });
+  return { nodes, W, H, hubs: assignHubs(nodes, ringSlots(categories.length, W, H), W, H) };
+}
+
+/** `n` slots spaced evenly round the ring, starting at the top. */
+function ringSlots(n: number, W: number, H: number) {
+  const step = (Math.PI * 2) / Math.max(1, n);
+  return Array.from({ length: n }, (_, i) => onRing(-Math.PI / 2 + i * step, W, H));
+}
+
+/**
+ * Gives each category a slot: categories in order of where their pieces lie from the
+ * centre, turned round the ring to sit as near their pieces' side as they can.
+ */
+function assignHubs(nodes: Node[], slots: { x: number; y: number }[], W: number, H: number): Hub[] {
+  const angle = (x: number, y: number) => Math.atan2(y - H / 2, x - W / 2);
+  const groups = new Map<string, number[]>();
+  nodes.forEach((n, i) => groups.set(n.item.category, [...(groups.get(n.item.category) ?? []), i]));
+  const cats = [...groups.entries()]
+    .map(([category, idx]) => ({
+      category,
+      idx,
+      angle: angle(idx.reduce((s, i) => s + nodes[i].x, 0) / idx.length, idx.reduce((s, i) => s + nodes[i].y, 0) / idx.length),
+    }))
+    .sort((a, b) => a.angle - b.angle);
+  const ordered = [...slots].sort((a, b) => angle(a.x, a.y) - angle(b.x, b.y));
+  const n = cats.length;
+  const gap = (a: number, b: number) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+  let shift = 0;
+  let best = Infinity;
+  for (let sh = 0; sh < n; sh++) {
+    const cost = cats.reduce((sum, c, i) => sum + gap(c.angle, angle(ordered[(i + sh) % n].x, ordered[(i + sh) % n].y)), 0);
+    if (cost < best) [best, shift] = [cost, sh];
+  }
+  return cats.map((c, i) => ({
+    category: c.category,
+    ...ordered[(i + shift) % n],
+    nodes: c.idx,
+    pieces: new Set(c.idx.map((j) => nodes[j].item.id)).size,
+  }));
 }
 
 function curve(a: { x: number; y: number }, b: { x: number; y: number }, bend = rand(0.1, 0.25)): string {
@@ -144,42 +221,6 @@ function curve(a: { x: number; y: number }, b: { x: number; y: number }, bend = 
   const dy = b.y - a.y;
   const bow = bend * (Math.random() < 0.5 ? -1 : 1);
   return `M${a.x.toFixed(1)},${a.y.toFixed(1)} Q${(mx - dy * bow).toFixed(1)},${(my + dx * bow).toFixed(1)} ${b.x.toFixed(1)},${b.y.toFixed(1)}`;
-}
-
-/**
- * One symbol per category, spaced evenly round the ring. Categories are taken in the
- * order of where their pieces lie from the centre, so each symbol sits on its pieces' side.
- */
-function placeHubs(nodes: Node[], W: number, H: number): Hub[] {
-  const cx = W / 2;
-  const cy = H / 2;
-  const groups = new Map<string, number[]>();
-  nodes.forEach((n, i) => groups.set(n.item.category, [...(groups.get(n.item.category) ?? []), i]));
-  const cats = [...groups.entries()].map(([category, idx]) => {
-    const mx = idx.reduce((s, i) => s + nodes[i].x, 0) / idx.length;
-    const my = idx.reduce((s, i) => s + nodes[i].y, 0) / idx.length;
-    return { category, idx, angle: Math.atan2(my - cy, mx - cx) };
-  });
-  cats.sort((a, b) => a.angle - b.angle);
-  const step = (Math.PI * 2) / Math.max(1, cats.length);
-  // Turn the whole ring so the symbols sit as near their pieces' side as they can.
-  const sx = cats.reduce((s, c, i) => s + Math.cos(c.angle - i * step), 0);
-  const sy = cats.reduce((s, c, i) => s + Math.sin(c.angle - i * step), 0);
-  const start = cats.length ? Math.atan2(sy, sx) : 0;
-  const rx = W / 2 - RING * 0.55;
-  const ry = H / 2 - RING * 0.55;
-  return cats.map((c, i) => {
-    const a = start + i * step;
-    // Where a ray from the centre at this angle meets the ring (a rectangle).
-    const t = 1 / Math.max(Math.abs(Math.cos(a)) / rx, Math.abs(Math.sin(a)) / ry);
-    return {
-      category: c.category,
-      x: cx + Math.cos(a) * t,
-      y: cy + Math.sin(a) * t,
-      nodes: c.idx,
-      pieces: new Set(c.idx.map((i) => nodes[i].item.id)).size,
-    };
-  });
 }
 
 /**
@@ -198,6 +239,7 @@ function connect(nodes: Node[], hubs: Hub[]): Edge[] {
       d: curve(nodes[a], nodes[b]),
       from: pastelOf(nodes[a].item),
       to: pastelOf(nodes[b].item),
+      strong: strongOf(nodes[b].item),
       category: nodes[a].item.category,
       spoke: false,
     });
@@ -243,6 +285,7 @@ function connect(nodes: Node[], hubs: Hub[]): Edge[] {
         d: curve(hub, n, rand(0.04, 0.12)),
         from: SPOKE_INK,
         to: pastelOf(n.item),
+        strong: strongOf(n.item),
         category: hub.category,
         spoke: true,
       });
@@ -262,6 +305,7 @@ export function MindMap({ items, note, onOpen }: Props) {
   const nodeEls = useRef<(HTMLDivElement | null)[]>([]);
   const pathEls = useRef<(SVGPathElement | null)[]>([]);
   const hubEls = useRef<(HTMLDivElement | null)[]>([]);
+  const glowEl = useRef<SVGSVGElement>(null);
   const captionEl = useRef<HTMLDivElement>(null);
   const hlEl = useRef<HTMLDivElement>(null);
   const hlTop = useRef<HTMLSpanElement>(null);
@@ -278,9 +322,12 @@ export function MindMap({ items, note, onOpen }: Props) {
 
   const key = items.map((i) => `${i.id}:${i.photos.length}`).join("|");
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const { nodes, W, H } = useMemo(() => layout(items), [key]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const hubs = useMemo(() => placeHubs(nodes, W, H), [nodes]);
+  const { nodes, W, H, hubs } = useMemo(() => {
+    // The map's shape follows the stage's free area at overview (see levels()): the stage
+    // is the screen less ~200px of header, tabs and bottom bar.
+    const aspect = Math.max(0.55, Math.min(2.2, (window.innerHeight - 200 - 110) / Math.max(240, window.innerWidth - 80)));
+    return layout(items, aspect, window.innerWidth);
+  }, [key]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const edges = useMemo(() => connect(nodes, hubs), [hubs]);
 
@@ -299,7 +346,7 @@ export function MindMap({ items, note, onOpen }: Props) {
   const levels = () => {
     const { w, h } = cam.current.size;
     // Clear of the zoom control and the note, so the symbols out on the ring stay visible.
-    const overview = Math.min(1, Math.min((w - 130) / W, (h - 170) / H));
+    const overview = Math.min(1, Math.min((w - 80) / W, (h - 110) / H));
     return [overview, Math.max(1, overview * 1.6), Math.min(MAX_ZOOM, Math.max(2.2, (w * CLOSE_FILL) / BASE))];
   };
   const minZoom = () => Math.min(0.35, levels()[0]);
@@ -458,8 +505,8 @@ export function MindMap({ items, note, onOpen }: Props) {
         world.current.style.transform = `translate3d(${(w / 2 - c.x * c.k).toFixed(1)}px, ${(h / 2 - c.y * c.k).toFixed(1)}px, 0) scale(${c.k.toFixed(4)})`;
       }
       wrap.current?.style.setProperty("--k", c.k.toFixed(4));
-      // Symbols never shrink below ~45px on screen, so they stay tappable zoomed right out.
-      wrap.current?.style.setProperty("--hub-s", Math.max(1, 0.7 / c.k).toFixed(3));
+      // Symbols never shrink below ~36px on screen, so they stay tappable zoomed right out.
+      wrap.current?.style.setProperty("--hub-s", Math.max(1, 0.64 / c.k).toFixed(3));
 
       // Zoom dashes: nearest of the three levels (on a log scale).
       const lv = levels();
@@ -516,9 +563,20 @@ export function MindMap({ items, note, onOpen }: Props) {
       ) as SVGPathElement[];
       const p = free[Math.floor(Math.random() * free.length)];
       if (p) {
-        p.style.animationDuration = `${rand(1.2, 2.8).toFixed(2)}s`;
+        const dur = `${rand(1.2, 2.8).toFixed(2)}s`;
+        p.style.animationDuration = dur;
         p.classList.add("glow");
         p.addEventListener("animationend", () => p.classList.remove("glow"), { once: true });
+        // A soft wide halo and a bright core in the piece's full colour, drawn over the line.
+        for (const cls of ["halo", "flare"]) {
+          const g = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          g.setAttribute("d", p.getAttribute("d")!);
+          g.setAttribute("class", cls);
+          g.style.stroke = p.dataset.strong!;
+          g.style.animationDuration = dur;
+          g.addEventListener("animationend", () => g.remove(), { once: true });
+          glowEl.current?.appendChild(g);
+        }
       }
       timer = window.setTimeout(tick, rand(250, 1600));
     };
@@ -608,7 +666,8 @@ export function MindMap({ items, note, onOpen }: Props) {
       });
       if (nodes[best]) return focusNode(best);
     }
-    if (next === 0) glideTo(W / 2, H / 2, lv[0]);
+    // Overview sits a little high, clear of the note.
+    if (next === 0) glideTo(W / 2 + 15 / lv[0], H / 2 + 30 / lv[0], lv[0]);
     else glideTo(c.x, c.y, lv[next]);
   };
 
@@ -661,10 +720,12 @@ export function MindMap({ items, note, onOpen }: Props) {
                 data-a={e.a}
                 data-b={e.b}
                 data-category={e.category}
-                style={{ ["--glow" as string]: e.spoke ? e.to : e.from }}
+                data-strong={e.strong}
+                style={{ ["--strong" as string]: e.strong }}
               />
             ))}
           </svg>
+          <svg className="map-glow" ref={glowEl} width={W} height={H} viewBox={`0 0 ${W} ${H}`} aria-hidden />
           {nodes.map((n, i) => (
             <div
               key={n.key}
