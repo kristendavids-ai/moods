@@ -55,7 +55,11 @@ const HUB = 56;
 const SPOKE_INK = "#a9a7a0";
 const CLOSE_FILL = 0.6; // a focused piece fills this share of the width
 const MAX_ZOOM = 3.5;
-const HIGHLIGHT_EVERY = 2400;
+// Pace: unhurried, so there's time to look at each piece.
+const HIGHLIGHT_EVERY = 6500; // how long the roving border rests on a piece
+const HIGHLIGHT_FADE = 600;
+const CALM_START = 2600; // no border or glow until the map has settled in
+const GLIDE_MS = 1150;
 const HIGHLIGHT_FALLBACK = "#27c93f";
 const PASTELS = ["#f5c6d0", "#f4e4a1", "#cfe3c4", "#c6dcf2", "#ddd0f2"];
 const DEEPS = ["#e0889e", "#d4b13a", "#86b373", "#74a2d6", "#a48ed6"];
@@ -335,6 +339,12 @@ export function MindMap({ items, note, onOpen }: Props) {
   }, [key]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const edges = useMemo(() => connect(nodes, hubs), [hubs]);
+  // The piece the map opens on; everything else unfolds outward from it.
+  const start = useMemo(() => Math.floor(Math.random() * nodes.length), [nodes]);
+  const unfold = (x: number, y: number) => {
+    const o = nodes[start];
+    return o ? Math.min(2400, 150 + Math.hypot(x - o.x, y - o.y) * 1.3) : 0;
+  };
 
   const cam = useRef({
     x: 0,
@@ -423,7 +433,7 @@ export function MindMap({ items, note, onOpen }: Props) {
   // Open at mid zoom on a random piece, so the screen starts full.
   useEffect(() => {
     const c = cam.current;
-    const n = nodes[Math.floor(Math.random() * nodes.length)];
+    const n = nodes[start];
     // Mid zoom: a handful of pieces on screen, as the reference opens.
     if (n) Object.assign(c, { x: n.x, y: n.y, k: levels()[1], glide: null, vel: [0, 0] });
     setFocused(-1);
@@ -438,18 +448,34 @@ export function MindMap({ items, note, onOpen }: Props) {
     let last = performance.now();
     let lastLevel = -1;
     let lastFitted: boolean | undefined;
-    const hl = { i: -1, since: 0, lastItem: "", category: null as string | null };
+    const hl = { i: -1, since: 0, lastItem: "", category: null as string | null, next: -1, swapAt: 0 };
+    const calmUntil = performance.now() + CALM_START;
 
     const toScreen = (n: Node) => {
       const { w, h } = c.size;
       return { x: w / 2 + (n.x - n.w / 2 - c.x) * c.k, y: h / 2 + (n.y - n.h / 2 - c.y) * c.k, w: n.w * c.k, h: n.h * c.k };
     };
 
+    // Fades the border off its piece first, then onto the next one.
     const showHighlight = (i: number, now: number) => {
       const el = hlEl.current;
       if (!el) return;
-      hl.i = i;
       hl.since = now;
+      if (hl.i >= 0 && !reduced) {
+        el.style.transition = `opacity ${HIGHLIGHT_FADE}ms ease`;
+        el.style.opacity = "0";
+        hl.next = i;
+        hl.swapAt = now + HIGHLIGHT_FADE + 40;
+        if (i < 0) hl.i = -1;
+        return;
+      }
+      placeHighlight(i);
+    };
+
+    const placeHighlight = (i: number) => {
+      const el = hlEl.current;
+      if (!el) return;
+      hl.i = i;
       if (i < 0) {
         el.style.opacity = "0";
         return;
@@ -466,7 +492,7 @@ export function MindMap({ items, note, onOpen }: Props) {
       el.style.transition = "none";
       el.style.opacity = "0";
       requestAnimationFrame(() => {
-        el.style.transition = reduced ? "none" : "opacity 120ms ease";
+        el.style.transition = reduced ? "none" : `opacity ${HIGHLIGHT_FADE + 300}ms ease`;
         el.style.opacity = "1";
       });
     };
@@ -491,8 +517,8 @@ export function MindMap({ items, note, onOpen }: Props) {
       if (!w || !h) return;
 
       if (c.glide) {
-        const t = Math.min(1, (now - c.glide.start) / 700);
-        const e = 1 - Math.pow(1 - t, 3);
+        const t = Math.min(1, (now - c.glide.start) / GLIDE_MS);
+        const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
         const [fx, fy, fk] = c.glide.from;
         const [tx, ty, tk] = c.glide.to;
         c.x = fx + (tx - fx) * e;
@@ -536,9 +562,13 @@ export function MindMap({ items, note, onOpen }: Props) {
       }
 
       // Highlight: hidden while a piece is focused; otherwise a new on-screen node every few seconds.
+      if (hl.swapAt && now >= hl.swapAt) {
+        hl.swapAt = 0;
+        if (hl.next >= 0 && f < 0) placeHighlight(hl.next);
+      }
       if (f >= 0) {
         if (hl.i >= 0) showHighlight(-1, now);
-      } else {
+      } else if (now > calmUntil && !hl.swapAt) {
         const cur = hl.i >= 0 ? toScreen(nodes[hl.i]) : undefined;
         const gone = cur && (cur.x + cur.w < 0 || cur.y + cur.h < 0 || cur.x > w || cur.y > h);
         const traced = activeRef.current !== hl.category;
@@ -567,9 +597,11 @@ export function MindMap({ items, note, onOpen }: Props) {
       const free = pathEls.current.filter(
         (p) => p && !p.classList.contains("glow") && (!cat || p.dataset.category === cat),
       ) as SVGPathElement[];
-      const p = free[Math.floor(Math.random() * free.length)];
+      // One at a time, now and then.
+      const busy = glowEl.current?.childElementCount;
+      const p = busy ? undefined : free[Math.floor(Math.random() * free.length)];
       if (p) {
-        const dur = `${rand(1.2, 2.8).toFixed(2)}s`;
+        const dur = `${rand(3.2, 4.8).toFixed(2)}s`;
         p.style.animationDuration = dur;
         p.classList.add("glow");
         p.addEventListener("animationend", () => p.classList.remove("glow"), { once: true });
@@ -584,9 +616,9 @@ export function MindMap({ items, note, onOpen }: Props) {
           glowEl.current?.appendChild(g);
         }
       }
-      timer = window.setTimeout(tick, rand(250, 1600));
+      timer = window.setTimeout(tick, rand(1800, 4500));
     };
-    timer = window.setTimeout(tick, rand(250, 900));
+    timer = window.setTimeout(tick, CALM_START + rand(400, 1600));
     return () => window.clearTimeout(timer);
   }, [edges]);
 
@@ -680,7 +712,7 @@ export function MindMap({ items, note, onOpen }: Props) {
   const fItem = focused >= 0 ? nodes[focused]?.item : undefined;
 
   return (
-    <section className="map" ref={wrap} aria-label="Index: a map of your pieces">
+    <section className={`map${focused >= 0 ? " focusing" : ""}`} ref={wrap} aria-label="Index: a map of your pieces">
       <div
         className="map-stage"
         onPointerDown={down}
@@ -727,7 +759,11 @@ export function MindMap({ items, note, onOpen }: Props) {
                 data-b={e.b}
                 data-category={e.category}
                 data-strong={e.strong}
-                style={{ ["--strong" as string]: e.strong }}
+                style={{
+                  ["--strong" as string]: e.strong,
+                  // Each line draws in once both its ends are there.
+                  animationDelay: `${(Math.max(unfold(...e.p1), unfold(...e.p2)) + 500).toFixed(0)}ms`,
+                }}
               />
             ))}
           </svg>
@@ -742,7 +778,7 @@ export function MindMap({ items, note, onOpen }: Props) {
               data-item={n.item.id}
               data-kind={n.photo.kind}
               aria-label={[n.item.brand, n.item.name].filter(Boolean).join(" ") || "Piece"}
-              style={{ left: n.x - n.w / 2, top: n.y - n.h / 2, width: n.w, height: n.h, animationDelay: `${Math.min(600, i * 12)}ms` }}
+              style={{ left: n.x - n.w / 2, top: n.y - n.h / 2, width: n.w, height: n.h, animationDelay: `${unfold(n.x, n.y).toFixed(0)}ms` }}
             >
               <PhotoView photo={n.photo} />
             </div>
@@ -758,7 +794,7 @@ export function MindMap({ items, note, onOpen }: Props) {
               role="button"
               aria-pressed={active === hub.category}
               aria-label={`${hub.category}: ${hub.pieces} ${hub.pieces === 1 ? "piece" : "pieces"}`}
-              style={{ left: hub.x, top: hub.y }}
+              style={{ left: hub.x, top: hub.y, animationDelay: `${(unfold(hub.x, hub.y) + 700).toFixed(0)}ms` }}
             >
               <span className="map-hub-mark">
                 <CategoryIcon category={hub.category} size={HUB} />
@@ -780,6 +816,7 @@ export function MindMap({ items, note, onOpen }: Props) {
       {fItem && (
         <div className="map-caption" ref={captionEl}>
           <span>{[fItem.brand, fItem.name].filter(Boolean).join(" — ") || "Piece"}</span>
+          <small>{[fItem.category, fItem.colour?.name, fItem.season].filter(Boolean).join(" · ")}</small>
           <button onClick={() => onOpen(fItem)}>View piece →</button>
         </div>
       )}

@@ -1951,6 +1951,8 @@ img {
   stroke-opacity: 0.9;
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
+  /* Lines arrive after the pieces they join (delay set per line). */
+  animation: fade 1.8s ease backwards;
 }
 
 /* Sporadic glow: the line itself brightens, and a halo and core in the piece's full
@@ -2021,7 +2023,20 @@ img {
 .map-lines path,
 .map-node,
 .map-hub {
-  transition: stroke-opacity 0.35s var(--ease), stroke-width 0.35s var(--ease), opacity 0.35s var(--ease);
+  transition: stroke-opacity 0.8s var(--ease), stroke-width 0.8s var(--ease), opacity 0.8s var(--ease);
+}
+
+/* A focused piece gets the stage: everything else steps right back. */
+.map.focusing .map-node:not(.focused) {
+  opacity: 0.12;
+}
+
+.map.focusing .map-lines path {
+  stroke-opacity: 0.1;
+}
+
+.map.focusing .map-hub {
+  opacity: 0.2;
 }
 
 .map-node.off {
@@ -2036,6 +2051,7 @@ img {
   align-items: center;
   gap: 5px;
   pointer-events: none;
+  animation: fade 1.6s var(--ease) backwards;
   transform: translate(-50%, -28px) scale(var(--hub-s, 1));
   transform-origin: 50% 28px;
 }
@@ -2089,9 +2105,30 @@ img {
   overflow: hidden;
   background: var(--plate);
   pointer-events: none;
-  /* "backwards" so the animation releases once done; a lingering one would isolate the node
-     and stop its white ground multiplying away. */
-  animation: fade 0.6s var(--ease) backwards;
+}
+
+/* Pieces arrive by a paper veil lifting off them (delay set per piece). Fading the node
+   itself would isolate it, and a cut-out's white ground would show as a box until done. */
+.map-node::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  background: var(--paper);
+  pointer-events: none;
+  animation: map-unveil 1.6s var(--ease) forwards;
+  animation-delay: inherit;
+}
+
+@keyframes map-unveil {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-node::after {
+    display: none;
+  }
 }
 
 /* Product cut-outs float on the paper, like the reference's drawings. */
@@ -2153,7 +2190,12 @@ img {
   gap: 4px;
   font-size: 12px;
   white-space: nowrap;
-  animation: fade 0.4s var(--ease) 0.5s both;
+  animation: fade 0.9s var(--ease) 0.9s both;
+}
+
+.map-caption small {
+  font-size: 11px;
+  color: var(--mute);
 }
 
 .map-caption button {
